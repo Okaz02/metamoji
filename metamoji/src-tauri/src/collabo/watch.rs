@@ -28,10 +28,10 @@ use tauri::{AppHandle, Emitter};
 use super::apply::{self, Change};
 use super::session::ClassroomState;
 use super::socket::{self, CollaboEvent, Command, Connection};
-use tokio::sync::mpsc;
 use crate::cloud::CloudClient;
 use crate::error::AppResult;
 use crate::model::GenericModel;
+use tokio::sync::mpsc;
 
 /// One decoded change, on its way to the editor.
 pub const EVENT: &str = "classnote://change";
@@ -44,7 +44,10 @@ pub const EVENT_ENDED: &str = "classnote://ended";
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum WireChange {
     /// A stroke, in the shape the app's own model stores.
-    Stroke { id: String, stroke: serde_json::Value },
+    Stroke {
+        id: String,
+        stroke: serde_json::Value,
+    },
     /// A unit, as models for the converter to turn into one.
     Unit {
         unit_id: String,
@@ -96,7 +99,11 @@ impl Watch {
     }
 
     pub fn room_user_id(&self) -> String {
-        self.room_user_id.lock().unwrap().clone().unwrap_or_default()
+        self.room_user_id
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_default()
     }
 }
 
@@ -132,7 +139,11 @@ pub async fn start(
         .session()
         .ok_or_else(|| crate::error::AppError::other("サインインしていません"))?;
     let device_id = classroom.device_id(cloud).await?;
-    let relay = classroom.rest(cloud).await?.login_room(room_id, None).await?;
+    let relay = classroom
+        .rest(cloud)
+        .await?
+        .login_room(room_id, None)
+        .await?;
 
     let emitter = app.clone();
     let note = note_id.to_string();

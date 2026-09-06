@@ -115,7 +115,11 @@ impl DriveClient {
     }
 
     pub fn home_dir(&self) -> Option<String> {
-        self.session.lock().unwrap().as_ref().map(|s| s.home_dir.clone())
+        self.session
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|s| s.home_dir.clone())
     }
 
     fn require_home(&self) -> AppResult<String> {
@@ -293,9 +297,7 @@ impl DriveClient {
 
         // A download that failed comes back as the JSON error envelope with a
         // JSON content type, not as a short file.
-        if !status.is_success()
-            || mime_type.as_deref().is_some_and(|m| m.contains("json"))
-        {
+        if !status.is_success() || mime_type.as_deref().is_some_and(|m| m.contains("json")) {
             if let Ok(Value::Object(json)) = serde_json::from_slice::<Value>(&bytes) {
                 check_error(&json).map_err(|e| annotate(e, &where_))?;
             }
@@ -311,7 +313,9 @@ impl DriveClient {
 
     /// Announces a sync and reports what kind of drive this is.
     pub async fn sync_start(&self, drive_id: &str) -> AppResult<i64> {
-        let body = self.get_json(&format!("rest/drives/{drive_id}/syncstart")).await?;
+        let body = self
+            .get_json(&format!("rest/drives/{drive_id}/syncstart"))
+            .await?;
         Ok(body.get("entryType").and_then(Value::as_i64).unwrap_or(0))
     }
 
@@ -383,7 +387,11 @@ impl DriveClient {
     }
 
     pub fn user_id(&self) -> Option<String> {
-        self.session.lock().unwrap().as_ref().map(|s| s.user_id.clone())
+        self.session
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|s| s.user_id.clone())
     }
 }
 
@@ -491,7 +499,9 @@ pub fn check_error(body: &Map<String, Value>) -> AppResult<()> {
         ));
     }
     if code == ACCESS_DENIED_EXCEPTION {
-        return Err(AppError::other("このクラスボックスを開く権限がありません。"));
+        return Err(AppError::other(
+            "このクラスボックスを開く権限がありません。",
+        ));
     }
     if code == DOCUMENT_NOT_FOUND_EXCEPTION {
         return Err(AppError::other("ノートが見つかりません。"));

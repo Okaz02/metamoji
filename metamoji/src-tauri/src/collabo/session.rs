@@ -132,7 +132,11 @@ impl ClassroomState {
     }
 
     pub async fn watched_note(&self) -> Option<String> {
-        self.watching.lock().await.as_ref().map(|w| w.note_id.clone())
+        self.watching
+            .lock()
+            .await
+            .as_ref()
+            .map(|w| w.note_id.clone())
     }
 
     /// Sends through the connection an open note already has, if it is the
@@ -159,7 +163,11 @@ impl ClassroomState {
     }
 
     pub fn room_id(&self) -> Option<String> {
-        self.active.lock().unwrap().as_ref().map(|a| a.room_id.clone())
+        self.active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|a| a.room_id.clone())
     }
 
     /// Enters a room: REST login, socket, then the socket's own `LoginRoom`.
@@ -282,7 +290,11 @@ impl ClassroomState {
     }
 
     pub fn drive_id(&self) -> Option<String> {
-        self.active.lock().unwrap().as_ref().map(|a| a.drive_id.clone())
+        self.active
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|a| a.drive_id.clone())
     }
 }
 

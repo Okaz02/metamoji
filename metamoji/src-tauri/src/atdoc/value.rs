@@ -262,7 +262,10 @@ mod tests {
         bytes.push(0b0000_0101);
         bytes.push(0x0a);
         bytes.push(0xf6); // -10
-        assert_eq!(decode(&bytes), serde_json::json!({ "$points": [10.0, -10.0] }));
+        assert_eq!(
+            decode(&bytes),
+            serde_json::json!({ "$points": [10.0, -10.0] })
+        );
     }
 
     #[test]

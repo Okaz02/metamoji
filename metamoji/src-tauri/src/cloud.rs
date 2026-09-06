@@ -84,7 +84,7 @@ const CAN_NOT_LOGIN_EXCEPTION: i64 = 0x7b;
 /// so any request can meet this. The original answers by re-authenticating
 /// silently from the stored credential and retrying once
 /// (`executeWithAutoLoginFor`), which is why the credential is kept at all.
-const NOT_LOGIN_EXCEPTION: i64 = 0x6a;
+pub(crate) const NOT_LOGIN_EXCEPTION: i64 = 0x6a;
 
 // ---------------------------------------------------------------------------
 // Types crossing the IPC boundary
@@ -128,8 +128,13 @@ pub enum Credential {
 /// normal account has no class or roll number.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LoginMethod {
-    Normal { login_name: String },
-    Classroom { class_group_id: String, id_number: String },
+    Normal {
+        login_name: String,
+    },
+    Classroom {
+        class_group_id: String,
+        id_number: String,
+    },
 }
 
 /// One drive the user belongs to.
@@ -357,6 +362,14 @@ impl CloudClient {
         self.http.clone()
     }
 
+    /// Writes the jar out after a request made through the shared client by
+    /// something other than this type — the webview's transport, in practice.
+    /// A sign-in is a cookie, and one made up there has to survive a restart
+    /// just as one made down here does.
+    pub fn persist_cookies(&self) {
+        self.persist();
+    }
+
     pub fn locale(&self) -> &str {
         &self.locale
     }
@@ -482,6 +495,17 @@ impl CloudClient {
     ) -> AppResult<Map<String, Value>> {
         self.command(co_login_id, reqwest::Method::POST, command, Some(params))
             .await
+    }
+
+    /// Signs in again, for a caller outside this type.
+    ///
+    /// The webview's client has no credential and is not going to be given
+    /// one, so when its session lapses it cannot recover by itself. This is
+    /// how [`crate::transport`] borrows the recovery the calls below get for
+    /// free: what goes up is a request that worked, never the password that
+    /// made it work.
+    pub async fn refresh_session(&self) -> AppResult<()> {
+        self.reauthenticate().await
     }
 
     /// Re-authenticates with the stored credential.
@@ -611,13 +635,13 @@ impl CloudClient {
                 .unwrap_or_else(|| url.to_string())
         );
 
-        let mut request = self
-            .http
-            .request(method, url)
-            .headers(self.headers());
+        let mut request = self.http.request(method, url).headers(self.headers());
         if let Some(body) = body {
             request = request
-                .header(reqwest::header::CONTENT_TYPE, "application/json; charset=utf-8")
+                .header(
+                    reqwest::header::CONTENT_TYPE,
+                    "application/json; charset=utf-8",
+                )
                 .body(serde_json::to_vec(&body)?);
         }
 
@@ -636,7 +660,9 @@ impl CloudClient {
             // A non-JSON body here almost always means a proxy or an error page
             // rather than the API, so quote the status instead of the parse
             // error, which would say nothing useful.
-            AppError::other(format!("サーバーの応答を解釈できません (HTTP {status}) — {where_}"))
+            AppError::other(format!(
+                "サーバーの応答を解釈できません (HTTP {status}) — {where_}"
+            ))
         })?;
 
         let body = match value {
@@ -670,7 +696,9 @@ impl CloudClient {
         params.insert("password".into(), json!(password));
 
         let school = self.school_for(co_login_id).await?;
-        let body = self.command_once(co_login_id, "/users3/login", params).await?;
+        let body = self
+            .command_once(co_login_id, "/users3/login", params)
+            .await?;
         let session = self.finish_login(&school, body)?;
         {
             let mut inner = self.inner.lock().unwrap();
@@ -735,7 +763,9 @@ impl CloudClient {
             // accepted too: the id is what the drive service authenticates
             // with, and an empty one is refused there rather than here, which
             // is a long way from the cause.
-            user_id: str_of("uuid").or_else(|| str_of("userId")).unwrap_or_default(),
+            user_id: str_of("uuid")
+                .or_else(|| str_of("userId"))
+                .unwrap_or_default(),
             name: str_of("name").unwrap_or_else(|| login_name.clone()),
             login_name,
             email: str_of("email"),
@@ -855,99 +885,6 @@ impl CloudClient {
             .as_ref()
             .map(|s| s.co_login_id.clone())
             .ok_or_else(|| AppError::other("サインインしていません"))
-    }
-
-    /// Creates a class box. The teacher's side of 「教室を作る」.
-    pub async fn create_class_box(&self, group_name: &str) -> AppResult<ClassBox> {
-        let co_login_id = self.signed_in_school()?;
-        let mut params = self.base_params();
-        params.insert("groupName".into(), json!(group_name));
-
-        let body = self
-            .post_command(&co_login_id, "/users3/crbox/create", params)
-            .await?;
-
-        let drive_id = required_str(&body, "driveId")?;
-        // The create response carries no join code; the teacher needs one to
-        // read out, so fetch it rather than making them press a second button.
-        let code = self.class_code(&drive_id, false).await.ok();
-
-        Ok(ClassBox {
-            drive_id,
-            group_id: opt_str(&body, "groupId"),
-            name: Some(group_name.to_string()),
-            join_code: code.as_ref().and_then(|c| c.join_code.clone()),
-            join_enabled: code.and_then(|c| c.join_enabled),
-        })
-    }
-
-    /// Joins a class box with the code the teacher read out.
-    pub async fn join_class_box(&self, join_code: &str) -> AppResult<ClassBox> {
-        let co_login_id = self.signed_in_school()?;
-        let mut params = self.base_params();
-        params.insert("joinCode".into(), json!(join_code));
-
-        let body = self
-            .post_command(&co_login_id, "/users3/crbox/join", params)
-            .await?;
-
-        Ok(ClassBox {
-            drive_id: required_str(&body, "driveId")?,
-            group_id: None,
-            name: None,
-            join_code: Some(join_code.to_string()),
-            join_enabled: None,
-        })
-    }
-
-    /// The join code for a class box.
-    ///
-    /// `regenerate` asks the server for a fresh one, which is how a teacher
-    /// shuts out a code that has escaped the classroom.
-    pub async fn class_code(&self, drive_id: &str, regenerate: bool) -> AppResult<ClassBox> {
-        let co_login_id = self.signed_in_school()?;
-        let mut params = self.base_params();
-        params.insert("driveId".into(), json!(drive_id));
-        params.insert("updateJoinCode".into(), json!(regenerate));
-
-        let body = self
-            .post_command(&co_login_id, "/users3/crbox/get/joincode", params)
-            .await?;
-
-        Ok(ClassBox {
-            drive_id: drive_id.to_string(),
-            group_id: None,
-            name: None,
-            join_code: opt_str(&body, "joinCode"),
-            join_enabled: body.get("joinEnabled").and_then(Value::as_bool),
-        })
-    }
-
-    /// Renames a class box or opens/closes it to new joiners.
-    pub async fn update_class_box(
-        &self,
-        drive_id: &str,
-        name: Option<&str>,
-        join_enabled: Option<bool>,
-    ) -> AppResult<()> {
-        let co_login_id = self.signed_in_school()?;
-        let mut params = self.base_params();
-        params.insert("driveId".into(), json!(drive_id));
-        if let Some(name) = name {
-            params.insert("name".into(), json!(name));
-        }
-        if let Some(enabled) = join_enabled {
-            // A tri-state on the wire: the third value means "leave it alone",
-            // which is what omitting the field would have meant anyway.
-            params.insert(
-                "joinEnabled".into(),
-                json!(if enabled { "ENABLED" } else { "DISABLED" }),
-            );
-        }
-
-        self.post_command(&co_login_id, "/users3/crbox/update", params)
-            .await?;
-        Ok(())
     }
 
     pub async fn logout(&self) -> AppResult<()> {
@@ -1206,11 +1143,6 @@ fn opt_str(body: &Map<String, Value>, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn required_str(body: &Map<String, Value>, key: &str) -> AppResult<String> {
-    opt_str(body, key)
-        .ok_or_else(|| AppError::other(format!("サーバーの応答に {key} がありません")))
-}
-
 fn with_trailing_slash(url: &str) -> String {
     let trimmed = url.trim();
     if trimmed.ends_with('/') {
@@ -1251,8 +1183,8 @@ mod tests {
     /// check is skipped rather than failed.
     #[test]
     fn the_product_version_matches_the_analysed_apk() {
-        let apktool = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../apk/apktool.yml");
+        let apktool =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apk/apktool.yml");
         let Ok(text) = std::fs::read_to_string(apktool) else {
             return;
         };
@@ -1376,10 +1308,22 @@ mod tests {
     fn only_the_integer_one_means_hidden() {
         // `isHidden` compares against 1; anything else is visible, and
         // treating "absent" as hidden would empty the list.
-        assert!(parse_drive_entry(&json!({ "id": "d", "hidden": 1 })).unwrap().hidden);
-        assert!(!parse_drive_entry(&json!({ "id": "d", "hidden": 0 })).unwrap().hidden);
+        assert!(
+            parse_drive_entry(&json!({ "id": "d", "hidden": 1 }))
+                .unwrap()
+                .hidden
+        );
+        assert!(
+            !parse_drive_entry(&json!({ "id": "d", "hidden": 0 }))
+                .unwrap()
+                .hidden
+        );
         assert!(!parse_drive_entry(&json!({ "id": "d" })).unwrap().hidden);
-        assert!(!parse_drive_entry(&json!({ "id": "d", "hidden": "1" })).unwrap().hidden);
+        assert!(
+            !parse_drive_entry(&json!({ "id": "d", "hidden": "1" }))
+                .unwrap()
+                .hidden
+        );
     }
 
     #[test]
@@ -1443,9 +1387,18 @@ mod tests {
 
     #[test]
     fn urls_get_exactly_one_trailing_slash() {
-        assert_eq!(with_trailing_slash("https://x.example"), "https://x.example/");
-        assert_eq!(with_trailing_slash("https://x.example/"), "https://x.example/");
-        assert_eq!(with_trailing_slash("  https://x.example  "), "https://x.example/");
+        assert_eq!(
+            with_trailing_slash("https://x.example"),
+            "https://x.example/"
+        );
+        assert_eq!(
+            with_trailing_slash("https://x.example/"),
+            "https://x.example/"
+        );
+        assert_eq!(
+            with_trailing_slash("  https://x.example  "),
+            "https://x.example/"
+        );
     }
 
     #[test]

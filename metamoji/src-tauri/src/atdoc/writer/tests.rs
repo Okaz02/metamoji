@@ -17,8 +17,18 @@ fn model(id: &str, parent: Option<&str>, model_type: &str, props: Value) -> Gene
 fn sample() -> GenericTree {
     let mut tree = GenericTree::new("root", "$sharenote");
     tree.models.get_mut("root").unwrap().props = json!({ "title": "テスト" });
-    tree.insert(model("page", Some("root"), "$page", json!({ "paperWidth": 841.92 })));
-    tree.insert(model("layer", Some("page"), "$layer", json!({ "layerType": "system:edit" })));
+    tree.insert(model(
+        "page",
+        Some("root"),
+        "$page",
+        json!({ "paperWidth": 841.92 }),
+    ));
+    tree.insert(model(
+        "layer",
+        Some("page"),
+        "$layer",
+        json!({ "layerType": "system:edit" }),
+    ));
     tree.insert(model(
         "draw",
         Some("layer"),
@@ -38,10 +48,15 @@ fn sample() -> GenericTree {
 fn meta() -> DocumentMeta {
     DocumentMeta {
         format_version: 2,
-        type_versions: [("$sharenote", 1u16), ("$page", 1), ("$layer", 1), ("$draw", 5)]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect(),
+        type_versions: [
+            ("$sharenote", 1u16),
+            ("$page", 1),
+            ("$layer", 1),
+            ("$draw", 5),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect(),
     }
 }
 
@@ -86,7 +101,11 @@ fn a_reference_still_points_at_the_same_model() {
     let bytes = write_document(&sample(), &meta()).unwrap();
     let parsed = parse_document(&bytes).unwrap();
 
-    let draw = parsed.models.values().find(|m| m.model_type == "$draw").unwrap();
+    let draw = parsed
+        .models
+        .values()
+        .find(|m| m.model_type == "$draw")
+        .unwrap();
     let target = draw.props["M"]["$ref"].as_u64().unwrap() as usize;
     assert_eq!(parsed.models[&target].model_type, "M");
 }
@@ -104,7 +123,11 @@ fn the_bookkeeping_the_importer_added_does_not_reach_the_wire() {
     for model in parsed.models.values() {
         assert!(model.props.get(META_KEY).is_none(), "{:?}", model.props);
     }
-    let draw = parsed.models.values().find(|m| m.model_type == "$draw").unwrap();
+    let draw = parsed
+        .models
+        .values()
+        .find(|m| m.model_type == "$draw")
+        .unwrap();
     assert!(draw.props.get("width").is_none(), "{:?}", draw.props);
 }
 
@@ -134,7 +157,11 @@ fn blocks_are_written_to_fit() {
     let mut blocks = 0;
     while (pos as usize) < bytes.len() {
         let size = u32::from_le_bytes(bytes[pos as usize..pos as usize + 4].try_into().unwrap());
-        let used = u32::from_le_bytes(bytes[pos as usize + 4..pos as usize + 8].try_into().unwrap());
+        let used = u32::from_le_bytes(
+            bytes[pos as usize + 4..pos as usize + 8]
+                .try_into()
+                .unwrap(),
+        );
         assert_eq!(size, used, "block at {pos} has slack");
         pos += 8 + size as u64;
         blocks += 1;
@@ -152,7 +179,11 @@ fn every_block_lands_where_the_table_says_it_does() {
     // block or as garbage, and only shows up on a real device.
     let bytes = write_document(&sample(), &meta()).unwrap();
     let header = crate::atdoc::parse_header(&bytes).unwrap();
-    for pos in [header.model_table_pos, header.undo_table_pos, header.extra_table_pos] {
+    for pos in [
+        header.model_table_pos,
+        header.undo_table_pos,
+        header.extra_table_pos,
+    ] {
         assert!(crate::atdoc::read_block_at(&bytes, pos).is_ok(), "{pos}");
     }
 }

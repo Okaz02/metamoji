@@ -226,9 +226,9 @@ fn normalize_color(raw: &str) -> String {
 
 fn pen_type_name(pen_type: i64) -> &'static str {
     match pen_type {
-        1 => "marker",     // CALLIGRAPHIC
-        2 => "fountain",   // FOUNTAIN
-        _ => "ballpoint",  // SIMPLE / ARROW
+        1 => "marker",    // CALLIGRAPHIC
+        2 => "fountain",  // FOUNTAIN
+        _ => "ballpoint", // SIMPLE / ARROW
     }
 }
 

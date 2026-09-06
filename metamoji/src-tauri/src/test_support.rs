@@ -15,7 +15,6 @@ use std::thread;
 
 use serde_json::Value;
 
-
 /// One request as the stub saw it.
 #[derive(Debug, Clone)]
 pub struct Seen {
@@ -134,4 +133,3 @@ fn read_request(stream: &mut TcpStream) -> Seen {
 fn african_colon() -> char {
     ':'
 }
-

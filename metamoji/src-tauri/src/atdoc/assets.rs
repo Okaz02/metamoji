@@ -43,7 +43,13 @@ pub fn extract(tree: &mut GenericTree) -> Vec<ImportedAsset> {
             continue;
         };
         let mut found: Vec<(String, ImportedAsset)> = Vec::new();
-        collect(&mut model.props, &id, &named, &mut String::new(), &mut found);
+        collect(
+            &mut model.props,
+            &id,
+            &named,
+            &mut String::new(),
+            &mut found,
+        );
         assets.extend(found.into_iter().map(|(_, asset)| asset));
     }
 
@@ -176,7 +182,10 @@ fn sniff(bytes: &[u8]) -> &'static str {
 /// The inverse of `extract`, and the step that has to run before a document
 /// this app imported can be written back out: the original has no notion of an
 /// asset store, so a reference to one is a hole in the file.
-pub fn restore_assets(tree: &mut GenericTree, assets: &HashMap<String, (String, Vec<u8>)>) -> Vec<String> {
+pub fn restore_assets(
+    tree: &mut GenericTree,
+    assets: &HashMap<String, (String, Vec<u8>)>,
+) -> Vec<String> {
     let mut missing = Vec::new();
     for model in tree.models.values_mut() {
         put_back(&mut model.props, assets, &mut missing);
@@ -201,9 +210,7 @@ fn put_back(
                         let mut blob = Map::new();
                         blob.insert(
                             "$blob".into(),
-                            Value::String(
-                                base64::engine::general_purpose::STANDARD.encode(bytes),
-                            ),
+                            Value::String(base64::engine::general_purpose::STANDARD.encode(bytes)),
                         );
                         blob.insert("$mime".into(), Value::String(mime.clone()));
                         *value = Value::Object(blob);
@@ -256,7 +263,11 @@ mod tests {
         // `$pdf` units reference the PDF by this exact string; inventing our
         // own here would leave every one of them pointing at nothing.
         let mut tree = tree_with(vec![
-            model("root_m5", "attachments", json!({ "tkt-1": { "$ref": "root_m6" } })),
+            model(
+                "root_m5",
+                "attachments",
+                json!({ "tkt-1": { "$ref": "root_m6" } }),
+            ),
             model(
                 "root_m6",
                 "attachment",
@@ -289,7 +300,10 @@ mod tests {
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].ticket, "root_m9:v");
         assert_eq!(assets[0].mime, "image/png");
-        assert_eq!(tree.models["root_m9"].props["v"]["$asset"], json!("root_m9:v"));
+        assert_eq!(
+            tree.models["root_m9"].props["v"]["$asset"],
+            json!("root_m9:v")
+        );
     }
 
     #[test]
@@ -311,7 +325,11 @@ mod tests {
     #[test]
     fn an_asset_reference_becomes_the_blob_it_replaced() {
         let mut tree = tree_with(vec![
-            model("root_m5", "attachments", json!({ "tkt-1": { "$ref": "root_m6" } })),
+            model(
+                "root_m5",
+                "attachments",
+                json!({ "tkt-1": { "$ref": "root_m6" } }),
+            ),
             model(
                 "root_m6",
                 "attachment",
@@ -338,8 +356,13 @@ mod tests {
             "attachment",
             json!({ "$blob": { "$asset": "gone", "$mime": "application/pdf" } }),
         )]);
-        assert_eq!(restore_assets(&mut tree, &HashMap::new()), vec!["gone".to_string()]);
-        assert!(tree.models["root_m6"].props["$blob"].get("$asset").is_some());
+        assert_eq!(
+            restore_assets(&mut tree, &HashMap::new()),
+            vec!["gone".to_string()]
+        );
+        assert!(tree.models["root_m6"].props["$blob"]
+            .get("$asset")
+            .is_some());
     }
 
     #[test]

@@ -116,8 +116,8 @@ pub fn add_stroke(
     let style_id = ids.next_id();
     let collaboration_id = ids.next_id();
 
-    let points = wire_points(stroke)
-        .ok_or_else(|| AppError::other("ストロークに座標がありません"))?;
+    let points =
+        wire_points(stroke).ok_or_else(|| AppError::other("ストロークに座標がありません"))?;
     let (bx, by, bw, bh) = bounds_of(stroke, &points)
         .ok_or_else(|| AppError::other("ストロークの範囲を求められません"))?;
 
@@ -519,7 +519,10 @@ mod tests {
         parse_document(&bytes).unwrap()
     }
 
-    fn find<'a>(doc: &'a crate::atdoc::ParsedDocument, kind: &str) -> &'a crate::atdoc::ParsedModel {
+    fn find<'a>(
+        doc: &'a crate::atdoc::ParsedDocument,
+        kind: &str,
+    ) -> &'a crate::atdoc::ParsedModel {
         doc.models
             .values()
             .find(|m| m.model_type == kind)
@@ -660,7 +663,10 @@ mod tests {
         let e = find(&doc, "E");
         // The points span (10,20)-(30,50), grown by 1.5x the 2.0 pen width.
         let at = |key: &str| e.props[key].as_f64().unwrap();
-        assert_eq!((at("BX"), at("BY"), at("BW"), at("BH")), (7.0, 17.0, 26.0, 36.0));
+        assert_eq!(
+            (at("BX"), at("BY"), at("BW"), at("BH")),
+            (7.0, 17.0, 26.0, 36.0)
+        );
     }
 
     #[test]
@@ -777,7 +783,10 @@ mod queue_tests {
     #[test]
     fn a_stroke_with_no_id_of_its_own_is_left_alone() {
         // There would be no way to tell it from the next one after a save.
-        let tree = note_with(json!([{ "points": { "$points": [1.0, 2.0] } }]), "system:personal");
+        let tree = note_with(
+            json!([{ "points": { "$points": [1.0, 2.0] } }]),
+            "system:personal",
+        );
         assert!(changes(&tree, &[]).0.is_empty());
     }
 }

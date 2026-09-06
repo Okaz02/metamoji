@@ -8,6 +8,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { GenericModel, GenericTree } from "../model/generic";
+import { api } from "../api/client";
 import { memoryBackend } from "./memoryBackend";
 
 export interface Tag {
@@ -530,19 +531,64 @@ export type ClassroomEvent =
   | { kind: "finished" }
   | { kind: "disconnected"; reason: string };
 
+// -- class boxes, through the shared client ---------------------------------
+//
+// These four go out through `@metamoji/sdk` rather than a Tauri command. They
+// are plain request/response calls with nothing binary in them and nothing the
+// classroom socket depends on, which is what makes them the ones to move
+// first. Everything below still goes through Rust: the drive service hands
+// back zip archives it parses, and the relay is a raw TLS socket a webview
+// cannot open.
+//
+// The session is not split by this. `createTauriTransport` sends every request
+// back down through Rust's own client, so there is one cookie jar and one
+// `session.json` whichever side made the call.
+
 export async function classroomCreateBox(name: string): Promise<ClassBox> {
   requireTauri();
-  return invoke<ClassBox>("classroom_create_box", { name });
+  const { data, error } = await api().classBoxes.create({ groupName: name });
+  if (error) throw new Error(error.message);
+
+  const driveId = required(data.driveId, "driveId");
+  // The create response carries no join code; the teacher needs one to read
+  // out, so fetch it rather than making them press a second button.
+  const code = await classroomBoxCode(driveId).catch(() => null);
+  return {
+    driveId,
+    groupId: data.groupId ?? null,
+    name,
+    joinCode: code?.joinCode ?? null,
+    joinEnabled: code?.joinEnabled ?? null,
+  };
 }
 
 export async function classroomJoinBox(joinCode: string): Promise<ClassBox> {
   requireTauri();
-  return invoke<ClassBox>("classroom_join_box", { joinCode });
+  const { data, error } = await api().classBoxes.join({ joinCode });
+  if (error) throw new Error(error.message);
+  return {
+    driveId: required(data.driveId, "driveId"),
+    groupId: null,
+    name: null,
+    joinCode,
+    joinEnabled: null,
+  };
 }
 
 export async function classroomBoxCode(driveId: string, regenerate = false): Promise<ClassBox> {
   requireTauri();
-  return invoke<ClassBox>("classroom_box_code", { driveId, regenerate });
+  const { data, error } = await api().classBoxes.getJoinCode({
+    driveId,
+    updateJoinCode: regenerate,
+  });
+  if (error) throw new Error(error.message);
+  return {
+    driveId,
+    groupId: null,
+    name: null,
+    joinCode: data.joinCode ?? null,
+    joinEnabled: data.joinEnabled ?? null,
+  };
 }
 
 export async function classroomUpdateBox(
@@ -551,7 +597,20 @@ export async function classroomUpdateBox(
   joinEnabled: boolean | null,
 ): Promise<void> {
   requireTauri();
-  return invoke<void>("classroom_update_box", { driveId, name, joinEnabled });
+  const { error } = await api().classBoxes.update({
+    driveId,
+    ...(name !== null ? { name } : {}),
+    // A tri-state on the wire: the third value means "leave it alone", which
+    // is what omitting the field would have meant anyway.
+    ...(joinEnabled !== null ? { joinEnabled: joinEnabled ? "ENABLED" : "DISABLED" } : {}),
+  } as const);
+  if (error) throw new Error(error.message);
+}
+
+/** A field the server is expected to send; its absence is the error. */
+function required(value: string | undefined, field: string): string {
+  if (!value) throw new Error(`サーバーの応答に ${field} がありません`);
+  return value;
 }
 
 export async function classroomCreateRoom(

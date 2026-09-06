@@ -216,7 +216,12 @@ mod tests {
 
     #[test]
     fn reads_the_body_and_the_style() {
-        let bytes = archive("UDDigiKyokasho ProN", 12.0, [0.0, 0.0, 0.0], "壁が人から受ける力");
+        let bytes = archive(
+            "UDDigiKyokasho ProN",
+            12.0,
+            [0.0, 0.0, 0.0],
+            "壁が人から受ける力",
+        );
         let body = decode(&bytes).expect("decodes");
         assert_eq!(body.text, "壁が人から受ける力");
         assert_eq!(body.font_family.as_deref(), Some("UDDigiKyokasho ProN"));

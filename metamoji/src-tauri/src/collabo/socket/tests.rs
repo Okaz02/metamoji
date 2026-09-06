@@ -25,7 +25,10 @@ fn login_carries_the_four_identifiers() {
         nickname: "山田".into(),
     });
     assert_eq!(frame.command, "LoginRoom");
-    assert_eq!(frame.booth_id, "*", "room-level commands use the `*` channel");
+    assert_eq!(
+        frame.booth_id, "*",
+        "room-level commands use the `*` channel"
+    );
     assert_eq!(frame.get("rid"), Some("R1"));
     // `did` is the collabo device id, not the drive id. Send the drive id and
     // the relay lets you in as a `visitor` who cannot attach a single booth.
@@ -57,7 +60,9 @@ fn an_edit_may_arrive_base64_in_a_parameter_instead_of_as_bytes() {
     // silently drops every edit that came the other way.
     let frame = decode("b1\tS1\tcmd:PostData seq:5 data:AQID");
     match event_for(&frame) {
-        Some(CollaboEvent::Direction { payload, sequence, .. }) => {
+        Some(CollaboEvent::Direction {
+            payload, sequence, ..
+        }) => {
             assert_eq!(payload, vec![1, 2, 3]);
             assert_eq!(sequence, 5);
         }
@@ -136,8 +141,10 @@ fn a_successful_login_reports_the_role_list() {
 
 #[test]
 fn a_refused_login_keeps_the_servers_reason() {
-    let event = event_for(&push("*\tS1\tcmd:LoginRoomResult status:false msg:room_closed"))
-        .expect("login result is an event");
+    let event = event_for(&push(
+        "*\tS1\tcmd:LoginRoomResult status:false msg:room_closed",
+    ))
+    .expect("login result is an event");
     match event {
         CollaboEvent::LoggedIn { ok, message, .. } => {
             assert!(!ok);
@@ -190,7 +197,11 @@ fn mode_and_role_changes_read_enable_as_the_only_true() {
 #[test]
 fn a_join_arrives_as_a_room_update() {
     match event_for(&push("*\tS1\tcmd:RoomUpdated key:user value:login uid:U4")).unwrap() {
-        CollaboEvent::RoomUpdated { key, value, user_id } => {
+        CollaboEvent::RoomUpdated {
+            key,
+            value,
+            user_id,
+        } => {
             assert_eq!((key.as_str(), value.as_str()), ("user", "login"));
             assert_eq!(user_id.as_deref(), Some("U4"));
         }

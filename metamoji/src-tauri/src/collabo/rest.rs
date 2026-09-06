@@ -109,7 +109,11 @@ impl<'a> CollaboRest<'a> {
         Ok(Value::Object(info))
     }
 
-    async fn post(&self, command: &str, parts: Vec<(&str, String)>) -> AppResult<Map<String, Value>> {
+    async fn post(
+        &self,
+        command: &str,
+        parts: Vec<(&str, String)>,
+    ) -> AppResult<Map<String, Value>> {
         let base = self
             .cloud
             .rest_host()
@@ -120,9 +124,9 @@ impl<'a> CollaboRest<'a> {
         for (name, body) in parts {
             form = form.part(
                 name.to_string(),
-                reqwest::multipart::Part::text(body).mime_str("application/json").map_err(
-                    |e| AppError::other(format!("multipart を組み立てられません: {e}")),
-                )?,
+                reqwest::multipart::Part::text(body)
+                    .mime_str("application/json")
+                    .map_err(|e| AppError::other(format!("multipart を組み立てられません: {e}")))?,
             );
         }
 
@@ -152,7 +156,10 @@ impl<'a> CollaboRest<'a> {
         // rather than the `data.errorCode` envelope `users3/*` uses.
         let ok = body
             .get("result")
-            .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true" || s == "OK")))
+            .and_then(|v| {
+                v.as_bool()
+                    .or_else(|| v.as_str().map(|s| s == "true" || s == "OK"))
+            })
             .unwrap_or(status.is_success());
         if !ok {
             let message = ["errorMessage", "message", "msg"]
@@ -185,10 +192,12 @@ impl<'a> CollaboRest<'a> {
         });
 
         let body = self
-            .post("cosmos/CreateUniqueID", vec![("authInfo", auth.to_string())])
+            .post(
+                "cosmos/CreateUniqueID",
+                vec![("authInfo", auth.to_string())],
+            )
             .await?;
-        str_of(&body, "deviceID")
-            .ok_or_else(|| AppError::other("応答に deviceID がありません"))
+        str_of(&body, "deviceID").ok_or_else(|| AppError::other("応答に deviceID がありません"))
     }
 
     pub async fn create_room(&self, title: &str, room_type: &str) -> AppResult<Room> {
@@ -227,7 +236,11 @@ impl<'a> CollaboRest<'a> {
     /// `localIp` is sent by the original so the relay can prefer a LAN path;
     /// it is not load-bearing, and an empty string is what a client behind a
     /// NAT it cannot introspect would send anyway.
-    pub async fn login_room(&self, room_id: &str, room_password: Option<&str>) -> AppResult<RelayInfo> {
+    pub async fn login_room(
+        &self,
+        room_id: &str,
+        room_password: Option<&str>,
+    ) -> AppResult<RelayInfo> {
         let mut parts = vec![
             ("authInfo", self.auth_info()?.to_string()),
             ("roomID", room_id.to_string()),
@@ -272,7 +285,10 @@ impl<'a> CollaboRest<'a> {
         });
 
         let body = self
-            .post("cosmos/GetMemberList", vec![("memberList", request.to_string())])
+            .post(
+                "cosmos/GetMemberList",
+                vec![("memberList", request.to_string())],
+            )
             .await?;
 
         Ok(body

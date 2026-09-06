@@ -266,8 +266,7 @@ fn build_tree(parsed: &ParsedDocument, new_root_id: &str) -> AtdocImport {
             // how to read — which today is a text unit's body.
             if !model.tail.is_empty() {
                 use base64::Engine as _;
-                let encoded =
-                    base64::engine::general_purpose::STANDARD.encode(&model.tail);
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&model.tail);
                 note_meta(map, |meta| {
                     meta.insert("tail".into(), Value::String(encoded));
                 });
@@ -330,7 +329,10 @@ fn build_tree(parsed: &ParsedDocument, new_root_id: &str) -> AtdocImport {
 }
 
 /// Edits the reserved `$atdoc` object on one model's properties.
-fn note_meta(props: &mut serde_json::Map<String, Value>, edit: impl FnOnce(&mut serde_json::Map<String, Value>)) {
+fn note_meta(
+    props: &mut serde_json::Map<String, Value>,
+    edit: impl FnOnce(&mut serde_json::Map<String, Value>),
+) {
     let mut meta = match props.remove(writer::META_KEY) {
         Some(Value::Object(map)) => map,
         _ => serde_json::Map::new(),
@@ -730,7 +732,13 @@ mod tests {
     #[test]
     fn a_document_with_no_title_leaves_the_caller_to_name_it() {
         let mut tree = handout();
-        child(&mut tree, "meta", "root", "docmeta", json!({ "title": "  " }));
+        child(
+            &mut tree,
+            "meta",
+            "root",
+            "docmeta",
+            json!({ "title": "  " }),
+        );
         assert_eq!(apply_docmeta(&mut tree), None);
         assert!(tree.models["root"].props.get("title").is_none());
     }

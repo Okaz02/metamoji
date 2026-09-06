@@ -146,7 +146,9 @@ pub enum Command {
     /// in as the same person hears nothing about them. This is how it finds
     /// out: `bidseq` lists `{boothId}={lastSequence}` and the relay answers
     /// with `BoothUpdated` when a booth moves past the sequence given.
-    NotifyBoothUpdated { marks: Vec<(String, i64)> },
+    NotifyBoothUpdated {
+        marks: Vec<(String, i64)>,
+    },
     /// Only ever sent in reply to the server's `Ping` (§4).
     PingResult,
     Disconnect,
@@ -164,8 +166,7 @@ impl Command {
                 use base64::Engine as _;
                 // Parameters are space-separated, so a name with a space in it
                 // would end the frame early. The original base64s it.
-                let name = base64::engine::general_purpose::STANDARD
-                    .encode(nickname.as_bytes());
+                let name = base64::engine::general_purpose::STANDARD.encode(nickname.as_bytes());
                 Frame::new("LoginRoom")
                     .param("rid", room_id)
                     .param("did", device_id)
@@ -179,9 +180,7 @@ impl Command {
             } => Frame::new("AttachBooth")
                 .param("bid", booth_id)
                 .param("last", last_sequence),
-            Command::DetachBooth { booth_id } => {
-                Frame::new("DetachBooth").param("bid", booth_id)
-            }
+            Command::DetachBooth { booth_id } => Frame::new("DetachBooth").param("bid", booth_id),
             Command::PostData {
                 booth_id,
                 payload,
@@ -358,9 +357,9 @@ pub async fn connect<F>(host: &str, port: u16, on_event: F) -> AppResult<Connect
 where
     F: Fn(CollaboEvent) + Send + Sync + 'static,
 {
-    let tcp = TcpStream::connect((host, port))
-        .await
-        .map_err(|e| AppError::other(format!("教室サーバーに接続できません ({host}:{port}): {e}")))?;
+    let tcp = TcpStream::connect((host, port)).await.map_err(|e| {
+        AppError::other(format!("教室サーバーに接続できません ({host}:{port}): {e}"))
+    })?;
     // Nagle would hold a stroke back waiting for company; these frames are
     // small and latency is the whole point.
     let _ = tcp.set_nodelay(true);

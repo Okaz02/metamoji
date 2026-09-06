@@ -24,6 +24,7 @@
 
 import { create } from "zustand";
 
+import { adoptSession } from "../api/client";
 import * as api from "../ipc/api";
 import type { CloudSession } from "../ipc/api";
 
@@ -184,6 +185,9 @@ export const useAuthStore = create<AuthState>((set) => ({
         api.cloudSession(),
       ]);
       set({ rootServer, session });
+      // The TypeScript client shares Rust's cookie jar but not its state:
+      // it has to be told which tenant it is talking to and who as.
+      adoptSession(session);
     } catch {
       // Runs on every launch, before the user has asked for anything. Failing
       // loudly here would put an error in front of someone who only wanted to
@@ -194,6 +198,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   setRootServer: async (url) => {
     await api.cloudSetRootServer(url);
     // Changing the root changes the tenant, so the session cannot survive it.
+    adoptSession(null);
     set({ rootServer: url, session: null });
   },
 
@@ -201,6 +206,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ busy: true, error: null });
     try {
       const session = await strategy.login(input);
+      adoptSession(session);
       set({ session, busy: false, rootServer: await api.cloudRootServer() });
       return true;
     } catch (err) {
@@ -216,6 +222,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       // A server that cannot be reached does not stop us signing out locally;
       // Rust drops the session before it tries the network for this reason.
     }
+    adoptSession(null);
     set({ session: null });
   },
 

@@ -225,7 +225,12 @@ fn drawing_changes(doc: &ParsedDocument, index: usize) -> Vec<Change> {
     }
 
     let mut out = Vec::new();
-    for record in doc.children.get(&(index as i32)).cloned().unwrap_or_default() {
+    for record in doc
+        .children
+        .get(&(index as i32))
+        .cloned()
+        .unwrap_or_default()
+    {
         let props = &doc.models[&record].props;
 
         // `t` is the execution type: a removal names the element and nothing
@@ -321,7 +326,12 @@ fn stroke_change(doc: &ParsedDocument, index: usize) -> Option<Change> {
 /// back on every download.
 fn erase_changes(doc: &ParsedDocument, index: usize) -> Vec<Change> {
     let mut out = Vec::new();
-    for record in doc.children.get(&(index as i32)).cloned().unwrap_or_default() {
+    for record in doc
+        .children
+        .get(&(index as i32))
+        .cloned()
+        .unwrap_or_default()
+    {
         let props = &doc.models[&record].props;
         // Both the element erased and, where the engine split one, the
         // fragment it named: neither survives here.
@@ -442,8 +452,7 @@ fn subtree(doc: &ParsedDocument, index: usize) -> Vec<GenericModel> {
             if !model.tail.is_empty() {
                 if let Value::Object(map) = &mut props {
                     use base64::Engine as _;
-                    let encoded =
-                        base64::engine::general_purpose::STANDARD.encode(&model.tail);
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(&model.tail);
                     crate::atdoc::note_tail(map, encoded);
                     if model.model_type == "$text" {
                         crate::atdoc::text::apply_to_props(map, &model.tail);
@@ -771,7 +780,9 @@ fn stroke_bounds(strokes: &[Value]) -> Option<(f64, f64, f64, f64)> {
         max_x = max_x.max(x + w);
         max_y = max_y.max(y + h);
     }
-    min_x.is_finite().then_some((min_x, min_y, max_x - min_x, max_y - min_y))
+    min_x
+        .is_finite()
+        .then_some((min_x, min_y, max_x - min_x, max_y - min_y))
 }
 
 /// Finds the layer the booth names, creating it when the note has never seen

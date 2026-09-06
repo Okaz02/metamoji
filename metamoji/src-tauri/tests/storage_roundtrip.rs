@@ -154,7 +154,9 @@ fn assets_survive_a_reopen() {
 
     {
         let store = NoteStore::open(&path).expect("open");
-        store.put_asset("asset_1", "image/png", &bytes).expect("put");
+        store
+            .put_asset("asset_1", "image/png", &bytes)
+            .expect("put");
     }
 
     let store = NoteStore::open(&path).expect("reopen");
@@ -201,7 +203,10 @@ fn the_catalog_lists_indexes_and_trashes_notes() {
     // which shows only them.
     assert_eq!(catalog.list(&ListQuery::default()).expect("list").len(), 1);
     let trash = catalog
-        .list(&ListQuery { trashed: true, ..Default::default() })
+        .list(&ListQuery {
+            trashed: true,
+            ..Default::default()
+        })
         .expect("trash view");
     assert_eq!(trash.len(), 1);
     assert_eq!(trash[0].id, "n1");
@@ -218,7 +223,10 @@ fn the_catalog_lists_indexes_and_trashes_notes() {
         .into_iter()
         .find(|n| n.id == "n2")
         .expect("n2");
-    assert!(n2.thumbnail.expect("thumbnail").starts_with("data:image/png;base64,"));
+    assert!(n2
+        .thumbnail
+        .expect("thumbnail")
+        .starts_with("data:image/png;base64,"));
 
     assert!(catalog.path_of("missing").is_err());
 

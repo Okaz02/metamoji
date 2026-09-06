@@ -22,5 +22,8 @@ fn an_empty_string_is_absent_rather_than_present_and_blank() {
     // The service fills unset fields with "" rather than omitting them, so treating
     // blank as a value would put empty room titles and hostnames downstream.
     assert_eq!(str_of(&body(json!({ "a": "" })), "a"), None);
-    assert_eq!(str_of(&body(json!({ "a": "x" })), "a").as_deref(), Some("x"));
+    assert_eq!(
+        str_of(&body(json!({ "a": "x" })), "a").as_deref(),
+        Some("x")
+    );
 }

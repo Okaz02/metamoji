@@ -59,9 +59,11 @@ fn the_code_is_read_from_the_nested_envelope() {
 #[test]
 fn a_flat_code_is_still_understood() {
     // Some responses do put it at the top level; accepting both costs nothing.
-    let err = check_error(&body(json!({ "errorCode": 5, "message": "容量が足りません" })))
-        .unwrap_err()
-        .to_string();
+    let err = check_error(&body(
+        json!({ "errorCode": 5, "message": "容量が足りません" }),
+    ))
+    .unwrap_err()
+    .to_string();
     assert!(err.starts_with("容量が足りません"), "{err}");
     // The number goes along: it is the only thing that maps to the smali's
     // error table when a message turns out to be unhelpful.

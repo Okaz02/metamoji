@@ -10,8 +10,11 @@ use std::path::PathBuf;
 use base64::Engine as _;
 use tauri::State;
 
-use crate::cloud::{ClassBox, ClassGroup, CloudClient, CloudSession, DriveEntry, School};
-use crate::collabo::{self, session::{ClassroomState, CollaboMember, CollaboRoom, EnterResult}};
+use crate::cloud::{ClassGroup, CloudClient, CloudSession, DriveEntry, School};
+use crate::collabo::{
+    self,
+    session::{ClassroomState, CollaboMember, CollaboRoom, EnterResult},
+};
 use crate::drive::{self, listing::Listing, DriveClient};
 use crate::error::{AppError, AppResult};
 use crate::model::{AppStatus, GenericTree, NoteSummary};
@@ -197,11 +200,7 @@ pub fn library_rename(state: State<'_, AppState>, id: String, title: String) -> 
 }
 
 #[tauri::command]
-pub fn library_set_trashed(
-    state: State<'_, AppState>,
-    id: String,
-    trashed: bool,
-) -> AppResult<()> {
+pub fn library_set_trashed(state: State<'_, AppState>, id: String, trashed: bool) -> AppResult<()> {
     state.catalog.lock().unwrap().set_trashed(&id, trashed)
 }
 
@@ -307,11 +306,11 @@ pub fn note_save(
         page_count,
         revision,
     )?;
-    state
-        .catalog
-        .lock()
-        .unwrap()
-        .index_document(&id, &title, search_body.as_deref().unwrap_or(""))?;
+    state.catalog.lock().unwrap().index_document(
+        &id,
+        &title,
+        search_body.as_deref().unwrap_or(""),
+    )?;
     Ok(now)
 }
 
@@ -361,11 +360,7 @@ pub fn asset_put(
 }
 
 #[tauri::command]
-pub fn asset_get(
-    state: State<'_, AppState>,
-    note_id: String,
-    ticket: String,
-) -> AppResult<String> {
+pub fn asset_get(state: State<'_, AppState>, note_id: String, ticket: String) -> AppResult<String> {
     let store = state.note(&note_id)?;
     let (mime, bytes) = store.lock().unwrap().get_asset(&ticket)?;
     Ok(format!(
@@ -540,43 +535,6 @@ pub fn cloud_session(cloud: State<'_, CloudClient>) -> Option<CloudSession> {
 // writer first.
 
 #[tauri::command]
-pub async fn classroom_create_box(
-    cloud: State<'_, CloudClient>,
-    name: String,
-) -> AppResult<ClassBox> {
-    cloud.create_class_box(&name).await
-}
-
-#[tauri::command]
-pub async fn classroom_join_box(
-    cloud: State<'_, CloudClient>,
-    join_code: String,
-) -> AppResult<ClassBox> {
-    cloud.join_class_box(&join_code).await
-}
-
-#[tauri::command]
-pub async fn classroom_box_code(
-    cloud: State<'_, CloudClient>,
-    drive_id: String,
-    regenerate: bool,
-) -> AppResult<ClassBox> {
-    cloud.class_code(&drive_id, regenerate).await
-}
-
-#[tauri::command]
-pub async fn classroom_update_box(
-    cloud: State<'_, CloudClient>,
-    drive_id: String,
-    name: Option<String>,
-    join_enabled: Option<bool>,
-) -> AppResult<()> {
-    cloud
-        .update_class_box(&drive_id, name.as_deref(), join_enabled)
-        .await
-}
-
-#[tauri::command]
 pub async fn classroom_create_room(
     cloud: State<'_, CloudClient>,
     classroom: State<'_, ClassroomState>,
@@ -586,7 +544,11 @@ pub async fn classroom_create_room(
     // `cosmos/*` puts the user id in its `authInfo` part, so it needs the same
     // repair the drive service does.
     cloud.ensure_complete().await?;
-    classroom.rest(&cloud).await?.create_room(&title, &room_type).await
+    classroom
+        .rest(&cloud)
+        .await?
+        .create_room(&title, &room_type)
+        .await
 }
 
 #[tauri::command]
@@ -692,7 +654,10 @@ pub async fn classbox_open(
         .await
         .map_err(step("サインインの更新"))?;
 
-    let home = cloud.drive_home(&drive_id).await.map_err(step("場所の取得"))?;
+    let home = cloud
+        .drive_home(&drive_id)
+        .await
+        .map_err(step("場所の取得"))?;
     let (user_id, password, qwd) = cloud
         .drive_credential()
         .ok_or_else(|| AppError::other("サインインしていません"))?;
@@ -767,7 +732,10 @@ pub async fn classbox_open_note(
     // The file the drive hands out holds only what the teacher put in it.
     // Everything the student wrote is in the note's room, so opening the note
     // means asking the room for its history as well.
-    let room_id = room_id_of(&drive, &drive_id, &document_id).await.ok().flatten();
+    let room_id = room_id_of(&drive, &drive_id, &document_id)
+        .await
+        .ok()
+        .flatten();
     let room = match room_id.clone() {
         Some(room_id) => {
             let ledger = state.note(&new_root_id)?.lock().unwrap().room_strokes()?;
@@ -944,7 +912,9 @@ pub async fn classnote_resync(
     let mut report = Resync::default();
 
     let Some(origin) = state.catalog.lock().unwrap().class_origin(&note_id)? else {
-        report.problems.push("このノートはクラスの写しではありません".into());
+        report
+            .problems
+            .push("このノートはクラスの写しではありません".into());
         return Ok(report);
     };
     let Some(room_id) = origin.room_id else {
@@ -1099,6 +1069,19 @@ pub async fn classnote_watch(
 pub async fn classnote_unwatch(classroom: State<'_, ClassroomState>) -> AppResult<()> {
     classroom.set_watch(None).await;
     Ok(())
+}
+
+/// Runs one HTTP request for the TypeScript client.
+///
+/// See `transport.rs`: it goes out through this app's own client so the
+/// webview and Rust share one session, and so the request has no origin for
+/// the server to refuse.
+#[tauri::command]
+pub async fn metamoji_fetch(
+    cloud: State<'_, CloudClient>,
+    request: crate::transport::FetchRequest,
+) -> AppResult<crate::transport::FetchResponse> {
+    crate::transport::fetch(&cloud, request).await
 }
 
 /// Records that a note is a copy of a class-box document.

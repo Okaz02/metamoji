@@ -28,9 +28,12 @@ fn corpus_files() -> Vec<PathBuf> {
     };
     let mut out = Vec::new();
     if let Ok(entries) = std::fs::read_dir(root.join("library")) {
-        out.extend(entries.flatten().map(|e| e.path()).filter(|p| {
-            p.extension().is_some_and(|e| e == "product")
-        }));
+        out.extend(
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|e| e == "product")),
+        );
     }
     let guide = root.join("guide/startguide.dat");
     if guide.is_file() {
@@ -211,7 +214,10 @@ fn an_imported_document_survives_being_saved_and_reopened() {
     let before = count_strokes(&imported.tree);
     let after = count_strokes(&reopened);
     assert_eq!(before, after, "strokes were lost across the save/reload");
-    assert!(before > 500, "expected a rich document, got {before} strokes");
+    assert!(
+        before > 500,
+        "expected a rich document, got {before} strokes"
+    );
 
     // A stroke must still carry usable geometry and styling after the trip.
     let sample = reopened
@@ -223,7 +229,13 @@ fn an_imported_document_survives_being_saved_and_reopened() {
         .flatten()
         .next()
         .expect("at least one stroke");
-    assert!(sample["points"]["$points"].as_array().expect("points").len() >= 4);
+    assert!(
+        sample["points"]["$points"]
+            .as_array()
+            .expect("points")
+            .len()
+            >= 4
+    );
     assert!(sample["color"].as_str().expect("color").starts_with('#'));
     assert!(sample["width"].as_f64().expect("width") > 0.0);
 
@@ -264,9 +276,7 @@ fn model_bag(bytes: &[u8]) -> Vec<String> {
                 }
                 Value::Object(out)
             }
-            Value::Array(items) => {
-                Value::Array(items.iter().map(|v| resolve(v, types)).collect())
-            }
+            Value::Array(items) => Value::Array(items.iter().map(|v| resolve(v, types)).collect()),
             other => other.clone(),
         }
     }
@@ -316,7 +326,11 @@ fn every_bundled_document_survives_being_written_back() {
             .map(|a| (a.ticket, (a.mime, a.bytes)))
             .collect();
         let missing = atdoc::restore_assets(&mut tree, &assets);
-        assert!(missing.is_empty(), "{}: unresolved assets {missing:?}", path.display());
+        assert!(
+            missing.is_empty(),
+            "{}: unresolved assets {missing:?}",
+            path.display()
+        );
 
         let written = atdoc::write_document(&tree, &atdoc::write_meta(&tree))
             .unwrap_or_else(|e| panic!("{}: {e}", path.display()));

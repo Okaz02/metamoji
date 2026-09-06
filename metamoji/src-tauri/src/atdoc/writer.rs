@@ -344,9 +344,8 @@ fn encode_extra_table(
         out.extend_from_slice(&type_index[model_type].to_le_bytes());
         // flagsS1 / flagsV1. Zero in every model of every document read so far.
         out.extend_from_slice(&[0, 0]);
-        let version = model_version(tree, id).unwrap_or_else(|| {
-            versions.get(model_type).copied().unwrap_or(0)
-        });
+        let version = model_version(tree, id)
+            .unwrap_or_else(|| versions.get(model_type).copied().unwrap_or(0));
         out.extend_from_slice(&version.to_le_bytes());
     }
     out

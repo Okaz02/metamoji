@@ -1,20 +1,21 @@
 pub mod atdoc;
 pub mod cloud;
-pub mod collabo;
-pub mod drive;
 #[cfg(test)]
 mod cloud_wire_tests;
+pub mod collabo;
+mod commands;
+pub mod drive;
 #[cfg(test)]
 #[path = "drive/wire_tests.rs"]
 mod drive_wire_tests;
-#[cfg(test)]
-mod test_support;
-mod commands;
 mod error;
 pub mod export;
 pub mod model;
 mod state;
 pub mod storage;
+#[cfg(test)]
+mod test_support;
+pub mod transport;
 
 use tauri::{Emitter, Manager};
 
@@ -76,11 +77,7 @@ fn atdoc_probe(path: String) -> AppResult<u16> {
 /// Writes the note out as a PDF. Pages arrive already rendered, so the export
 /// matches the screen exactly — see `export.rs` for why that trade was made.
 #[tauri::command]
-fn export_pdf(
-    path: String,
-    title: String,
-    pages: Vec<export::ExportPage>,
-) -> AppResult<()> {
+fn export_pdf(path: String, title: String, pages: Vec<export::ExportPage>) -> AppResult<()> {
     export::write_pdf(&path, &title, &pages)
 }
 
@@ -251,10 +248,6 @@ pub fn run() {
             commands::cloud_classroom_login,
             commands::cloud_logout,
             commands::cloud_session,
-            commands::classroom_create_box,
-            commands::classroom_join_box,
-            commands::classroom_box_code,
-            commands::classroom_update_box,
             commands::classroom_create_room,
             commands::classroom_enter,
             commands::classroom_leave,
@@ -267,6 +260,7 @@ pub fn run() {
             commands::classbox_revision,
             commands::classbox_open_note,
             commands::classbox_send_strokes,
+            commands::metamoji_fetch,
             commands::classbox_link,
             commands::classbox_origin,
             commands::classnote_watch,

@@ -128,12 +128,16 @@ impl Catalog {
         // accepted from us — the optimistic-lock token a later write sends as
         // `check` (docs/06 §5). Absent means the note has never been synced.
         if !self.has_column("documents", "server_revision")? {
-            self.conn
-                .execute("ALTER TABLE documents ADD COLUMN server_revision INTEGER", [])?;
+            self.conn.execute(
+                "ALTER TABLE documents ADD COLUMN server_revision INTEGER",
+                [],
+            )?;
         }
         if !self.has_column("documents", "synced_revision")? {
-            self.conn
-                .execute("ALTER TABLE documents ADD COLUMN synced_revision INTEGER", [])?;
+            self.conn.execute(
+                "ALTER TABLE documents ADD COLUMN synced_revision INTEGER",
+                [],
+            )?;
         }
         // Where a note came from, when it came from a class box. A local copy
         // is not much use without it: sending what the user writes back means
@@ -143,8 +147,10 @@ impl Catalog {
                 .execute("ALTER TABLE documents ADD COLUMN class_drive_id TEXT", [])?;
         }
         if !self.has_column("documents", "class_document_id")? {
-            self.conn
-                .execute("ALTER TABLE documents ADD COLUMN class_document_id TEXT", [])?;
+            self.conn.execute(
+                "ALTER TABLE documents ADD COLUMN class_document_id TEXT",
+                [],
+            )?;
         }
         // Kept with the rest rather than looked up when needed: the lookup
         // goes through the drive service, which is only signed in while a
@@ -200,7 +206,11 @@ impl Catalog {
             args.push(Box::new(tag_id.clone()));
         }
 
-        wheres.push(if query.trashed { "d.trashed = 1".into() } else { "d.trashed = 0".into() });
+        wheres.push(if query.trashed {
+            "d.trashed = 1".into()
+        } else {
+            "d.trashed = 0".into()
+        });
 
         // A folder filter only applies outside the trash: the trash is flat, so
         // a note keeps its folder but is listed regardless of it.
@@ -362,9 +372,11 @@ impl Catalog {
     pub fn path_of(&self, id: &str) -> AppResult<PathBuf> {
         let path: Option<String> = self
             .conn
-            .query_row("SELECT path FROM documents WHERE id = ?1", params![id], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT path FROM documents WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
             .optional()?;
         path.map(PathBuf::from)
             .ok_or_else(|| AppError::NoteNotFound(id.to_string()))
@@ -486,8 +498,10 @@ impl Catalog {
     }
 
     pub fn rename_folder(&self, id: &str, name: &str) -> AppResult<()> {
-        self.conn
-            .execute("UPDATE folders SET name = ?2 WHERE id = ?1", params![id, name])?;
+        self.conn.execute(
+            "UPDATE folders SET name = ?2 WHERE id = ?1",
+            params![id, name],
+        )?;
         Ok(())
     }
 
@@ -708,7 +722,6 @@ mod fts_tests {
             assert_eq!(fts_query(junk), None, "expected None for {junk:?}");
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------

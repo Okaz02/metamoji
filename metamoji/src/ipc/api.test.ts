@@ -9,9 +9,13 @@
 
 import { describe, expect, it } from "vitest";
 
-const API = Object.values(
-  import.meta.glob("./api.ts", { query: "?raw", import: "default", eager: true }),
-).join("\n") as string;
+// `api.ts` is most of the surface; `../api/` holds the transport the
+// TypeScript client runs on, which invokes a command of its own. Both are the
+// frontend's side of the contract.
+const API = Object.values({
+  ...import.meta.glob("./api.ts", { query: "?raw", import: "default", eager: true }),
+  ...import.meta.glob("../api/*.ts", { query: "?raw", import: "default", eager: true }),
+}).join("\n") as string;
 
 const RUST = Object.values(
   import.meta.glob("../../src-tauri/src/*.rs", {

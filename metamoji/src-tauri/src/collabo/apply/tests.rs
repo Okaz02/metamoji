@@ -34,8 +34,18 @@ fn detached(mut m: GenericModel) -> GenericModel {
 /// `D T=0` → `i` → `E` → `$text`, which is how a new unit arrives.
 fn add_unit_payload(unit_type: &str, unit_id: &str) -> Vec<u8> {
     wire("booth_[unit]_draw", |tree| {
-        tree.insert(detached(model("d", Some("direction"), "D", json!({ "T": 0, "V": 2 }))));
-        tree.insert(model("i0", Some("d"), "i", json!({ "i": "e1", "m": { "$ref": "e" } })));
+        tree.insert(detached(model(
+            "d",
+            Some("direction"),
+            "D",
+            json!({ "T": 0, "V": 2 }),
+        )));
+        tree.insert(model(
+            "i0",
+            Some("d"),
+            "i",
+            json!({ "i": "e1", "m": { "$ref": "e" } }),
+        ));
         tree.insert(detached(model(
             "e",
             Some("direction"),
@@ -56,7 +66,12 @@ fn add_unit_payload(unit_type: &str, unit_id: &str) -> Vec<u8> {
 /// layer, because the drive's copy never has one.
 fn note() -> GenericTree {
     let mut tree = GenericTree::new("root", "$sharenote");
-    tree.insert(model("page", Some("root"), "$page", json!({ "pageId": "P1" })));
+    tree.insert(model(
+        "page",
+        Some("root"),
+        "$page",
+        json!({ "pageId": "P1" }),
+    ));
     tree.insert(model(
         "layer_edit",
         Some("page"),
@@ -74,7 +89,10 @@ fn a_booth_names_the_page_and_the_layer() {
 
     let personal = placement_of("P1_[layer-forUser]_9876");
     assert_eq!(personal.page_id, "P1");
-    assert_eq!(personal.layer_id.as_deref(), Some("P1_[layer-forUser]_9876"));
+    assert_eq!(
+        personal.layer_id.as_deref(),
+        Some("P1_[layer-forUser]_9876")
+    );
     assert_eq!(personal.layer_type.as_deref(), Some("system:personal"));
 
     let common = placement_of("P1_[layer-common]");
@@ -151,13 +169,20 @@ fn a_shared_attachment_comes_out_as_bytes() {
 #[test]
 fn a_direction_kind_this_build_does_not_act_on_is_named() {
     let payload = wire("b", |tree| {
-        tree.insert(detached(model("d", Some("direction"), "D", json!({ "T": 8 }))));
+        tree.insert(detached(model(
+            "d",
+            Some("direction"),
+            "D",
+            json!({ "T": 8 }),
+        )));
         json!({ "$ref": "d" })
     });
     let direction = decode(&payload).unwrap();
     assert_eq!(
         direction.changes,
-        vec![Change::Unsupported { kind: "D SET_VARIATION".into() }]
+        vec![Change::Unsupported {
+            kind: "D SET_VARIATION".into()
+        }]
     );
 }
 
@@ -165,7 +190,12 @@ fn a_direction_kind_this_build_does_not_act_on_is_named() {
 fn applying_creates_the_personal_layer_the_drive_copy_lacks() {
     let mut tree = note();
     let direction = decode(&add_unit_payload("$text", "u-1")).unwrap();
-    let applied = apply(&mut tree, "P1_[layer-forUser]_9876", &direction, &Default::default());
+    let applied = apply(
+        &mut tree,
+        "P1_[layer-forUser]_9876",
+        &direction,
+        &Default::default(),
+    );
 
     assert_eq!(applied.units, 1);
     let layer = tree
@@ -187,9 +217,19 @@ fn applying_the_same_direction_twice_replaces_rather_than_duplicates() {
     // gains a copy of every unit on every reopen.
     let mut tree = note();
     let direction = decode(&add_unit_payload("$text", "u-1")).unwrap();
-    apply(&mut tree, "P1_[layer-forUser]_9876", &direction, &Default::default());
+    apply(
+        &mut tree,
+        "P1_[layer-forUser]_9876",
+        &direction,
+        &Default::default(),
+    );
     let after_one = tree.models.len();
-    apply(&mut tree, "P1_[layer-forUser]_9876", &direction, &Default::default());
+    apply(
+        &mut tree,
+        "P1_[layer-forUser]_9876",
+        &direction,
+        &Default::default(),
+    );
 
     assert_eq!(tree.models.len(), after_one);
     let layer = tree
@@ -204,7 +244,12 @@ fn applying_the_same_direction_twice_replaces_rather_than_duplicates() {
 fn a_booth_for_a_page_the_note_does_not_have_is_ignored() {
     let mut tree = note();
     let direction = decode(&add_unit_payload("$text", "u-1")).unwrap();
-    let applied = apply(&mut tree, "P9_[layer-forUser]_9876", &direction, &Default::default());
+    let applied = apply(
+        &mut tree,
+        "P9_[layer-forUser]_9876",
+        &direction,
+        &Default::default(),
+    );
     assert_eq!(applied.units, 0);
     assert_eq!(tree.models.len(), note().models.len());
 }
@@ -223,7 +268,12 @@ fn a_page_level_booth_lands_on_the_edit_layer() {
 #[test]
 fn what_a_unit_references_comes_with_it() {
     let payload = wire("booth_[unit]_draw", |tree| {
-        tree.insert(detached(model("d", Some("direction"), "D", json!({ "T": 0 }))));
+        tree.insert(detached(model(
+            "d",
+            Some("direction"),
+            "D",
+            json!({ "T": 0 }),
+        )));
         tree.insert(model("i0", Some("d"), "i", json!({ "m": { "$ref": "e" } })));
         tree.insert(detached(model(
             "e",
@@ -248,7 +298,12 @@ fn what_a_unit_references_comes_with_it() {
 
     let mut tree = note();
     let direction = decode(&payload).unwrap();
-    apply(&mut tree, "P1_[layer-forUser]_9876", &direction, &Default::default());
+    apply(
+        &mut tree,
+        "P1_[layer-forUser]_9876",
+        &direction,
+        &Default::default(),
+    );
 
     let unit = tree
         .models
@@ -268,7 +323,12 @@ fn the_personal_layer_becomes_the_one_being_drawn_on() {
     // sent back.
     let mut tree = note();
     let direction = decode(&add_unit_payload("$text", "u-1")).unwrap();
-    apply(&mut tree, "P1_[layer-forUser]_9876", &direction, &Default::default());
+    apply(
+        &mut tree,
+        "P1_[layer-forUser]_9876",
+        &direction,
+        &Default::default(),
+    );
 
     let personal = tree
         .models
@@ -277,14 +337,22 @@ fn the_personal_layer_becomes_the_one_being_drawn_on() {
         .unwrap()
         .id
         .clone();
-    assert_eq!(tree.models["page"].props["currentLayer"]["$ref"], json!(personal));
+    assert_eq!(
+        tree.models["page"].props["currentLayer"]["$ref"],
+        json!(personal)
+    );
 }
 
 #[test]
 fn a_common_layer_does_not_steal_the_cursor() {
     let mut tree = note();
     let direction = decode(&add_unit_payload("$text", "u-1")).unwrap();
-    apply(&mut tree, "P1_[layer-common]", &direction, &Default::default());
+    apply(
+        &mut tree,
+        "P1_[layer-common]",
+        &direction,
+        &Default::default(),
+    );
     assert!(tree.models["page"].props.get("currentLayer").is_none());
 }
 
@@ -294,8 +362,18 @@ fn an_erased_stroke_is_taken_out_again() {
     // and ignored the removal would keep showing what someone rubbed out.
     let mut tree = note();
     let add = decode(&wire("booth_[unit]_draw", |tree| {
-        tree.insert(detached(model("d", Some("direction"), "D", json!({ "T": 0 }))));
-        tree.insert(model("i0", Some("d"), "i", json!({ "i": "el-1", "m": { "$ref": "e" } })));
+        tree.insert(detached(model(
+            "d",
+            Some("direction"),
+            "D",
+            json!({ "T": 0 }),
+        )));
+        tree.insert(model(
+            "i0",
+            Some("d"),
+            "i",
+            json!({ "i": "el-1", "m": { "$ref": "e" } }),
+        ));
         tree.insert(detached(model(
             "e",
             Some("direction"),
@@ -310,21 +388,43 @@ fn an_erased_stroke_is_taken_out_again() {
         json!({ "$ref": "d" })
     }))
     .unwrap();
-    let applied = apply(&mut tree, "P1_[layer-forUser]_9876", &add, &Default::default());
+    let applied = apply(
+        &mut tree,
+        "P1_[layer-forUser]_9876",
+        &add,
+        &Default::default(),
+    );
     assert_eq!(applied.strokes, 1);
-    assert_eq!(applied.stroke_ids, vec![("el-1".to_string(), "P1_[layer-forUser]_9876".to_string())]);
+    assert_eq!(
+        applied.stroke_ids,
+        vec![("el-1".to_string(), "P1_[layer-forUser]_9876".to_string())]
+    );
 
     let remove = decode(&wire("booth_[unit]_draw", |tree| {
-        tree.insert(detached(model("d", Some("direction"), "D", json!({ "T": 0 }))));
+        tree.insert(detached(model(
+            "d",
+            Some("direction"),
+            "D",
+            json!({ "T": 0 }),
+        )));
         tree.insert(model("i0", Some("d"), "i", json!({ "i": "el-1", "t": 1 })));
         json!({ "$ref": "d" })
     }))
     .unwrap();
     assert_eq!(remove.changes, vec![Change::Remove { id: "el-1".into() }]);
 
-    let applied = apply(&mut tree, "P1_[layer-forUser]_9876", &remove, &Default::default());
+    let applied = apply(
+        &mut tree,
+        "P1_[layer-forUser]_9876",
+        &remove,
+        &Default::default(),
+    );
     assert_eq!(applied.removed, 1);
-    let draw = tree.models.values().find(|m| m.model_type == "$draw").unwrap();
+    let draw = tree
+        .models
+        .values()
+        .find(|m| m.model_type == "$draw")
+        .unwrap();
     assert_eq!(draw.props["strokes"].as_array().unwrap().len(), 0);
 }
 
@@ -332,12 +432,22 @@ fn an_erased_stroke_is_taken_out_again() {
 fn a_removal_for_something_this_note_does_not_have_changes_nothing() {
     let mut tree = note();
     let remove = decode(&wire("b", |tree| {
-        tree.insert(detached(model("d", Some("direction"), "D", json!({ "T": 0 }))));
+        tree.insert(detached(model(
+            "d",
+            Some("direction"),
+            "D",
+            json!({ "T": 0 }),
+        )));
         tree.insert(model("i0", Some("d"), "i", json!({ "i": "gone", "t": 1 })));
         json!({ "$ref": "d" })
     }))
     .unwrap();
-    let applied = apply(&mut tree, "P1_[layer-forUser]_9876", &remove, &Default::default());
+    let applied = apply(
+        &mut tree,
+        "P1_[layer-forUser]_9876",
+        &remove,
+        &Default::default(),
+    );
     assert_eq!(applied.removed, 0);
 }
 
@@ -345,8 +455,17 @@ fn a_removal_for_something_this_note_does_not_have_changes_nothing() {
 fn a_unit_remembers_the_element_id_it_arrived_under() {
     let mut tree = note();
     let direction = decode(&add_unit_payload("$text", "u-1")).unwrap();
-    apply(&mut tree, "P1_[layer-forUser]_9876", &direction, &Default::default());
-    let unit = tree.models.values().find(|m| m.model_type == "$text").unwrap();
+    apply(
+        &mut tree,
+        "P1_[layer-forUser]_9876",
+        &direction,
+        &Default::default(),
+    );
+    let unit = tree
+        .models
+        .values()
+        .find(|m| m.model_type == "$text")
+        .unwrap();
     assert_eq!(unit.props["$roomElementId"], json!("e1"));
 }
 
@@ -363,7 +482,10 @@ fn a_layer_to_write_on_is_made_even_when_the_room_is_empty() {
         .find(|m| m.props.get("layerId").and_then(Value::as_str) == Some("P1_[layer-forUser]_9876"))
         .expect("the layer exists");
     assert_eq!(layer.props["layerType"], json!("system:personal"));
-    assert_eq!(tree.models["page"].props["currentLayer"]["$ref"], json!(layer.id));
+    assert_eq!(
+        tree.models["page"].props["currentLayer"]["$ref"],
+        json!(layer.id)
+    );
 }
 
 #[test]
@@ -387,8 +509,18 @@ fn the_erasers_own_direction_takes_the_stroke_out() {
     // out. Ignoring it meant every download brought the erased strokes back.
     let mut tree = note();
     let add = decode(&wire("booth_[unit]_draw", |tree| {
-        tree.insert(detached(model("d", Some("direction"), "D", json!({ "T": 0 }))));
-        tree.insert(model("i0", Some("d"), "i", json!({ "i": "el-1", "m": { "$ref": "e" } })));
+        tree.insert(detached(model(
+            "d",
+            Some("direction"),
+            "D",
+            json!({ "T": 0 }),
+        )));
+        tree.insert(model(
+            "i0",
+            Some("d"),
+            "i",
+            json!({ "i": "el-1", "m": { "$ref": "e" } }),
+        ));
         tree.insert(detached(model(
             "e",
             Some("direction"),
@@ -399,12 +531,22 @@ fn the_erasers_own_direction_takes_the_stroke_out() {
         json!({ "$ref": "d" })
     }))
     .unwrap();
-    apply(&mut tree, "P1_[layer-forUser]_9876", &add, &Default::default());
+    apply(
+        &mut tree,
+        "P1_[layer-forUser]_9876",
+        &add,
+        &Default::default(),
+    );
 
     // A partial erase: the range is a fraction of the stroke, and the engine
     // would keep the rest as a fragment.
     let erase = decode(&wire("booth_[unit]_draw", |tree| {
-        tree.insert(detached(model("d", Some("direction"), "D", json!({ "T": 10 }))));
+        tree.insert(detached(model(
+            "d",
+            Some("direction"),
+            "D",
+            json!({ "T": 10 }),
+        )));
         tree.insert(model(
             "i0",
             Some("d"),
@@ -416,9 +558,18 @@ fn the_erasers_own_direction_takes_the_stroke_out() {
     .unwrap();
     assert_eq!(erase.changes, vec![Change::Remove { id: "el-1".into() }]);
 
-    let applied = apply(&mut tree, "P1_[layer-forUser]_9876", &erase, &Default::default());
+    let applied = apply(
+        &mut tree,
+        "P1_[layer-forUser]_9876",
+        &erase,
+        &Default::default(),
+    );
     assert_eq!(applied.removed, 1);
-    let draw = tree.models.values().find(|m| m.model_type == "$draw").unwrap();
+    let draw = tree
+        .models
+        .values()
+        .find(|m| m.model_type == "$draw")
+        .unwrap();
     assert!(draw.props["strokes"].as_array().unwrap().is_empty());
 }
 
@@ -427,8 +578,18 @@ fn a_fragment_named_by_the_eraser_goes_too() {
     // A record for a piece the engine split off names the stroke it came from
     // in `b`; both ids refer to ink that is no longer whole.
     let erase = decode(&wire("b", |tree| {
-        tree.insert(detached(model("d", Some("direction"), "D", json!({ "T": 10 }))));
-        tree.insert(model("i0", Some("d"), "i", json!({ "i": "el-4", "b": "el-1" })));
+        tree.insert(detached(model(
+            "d",
+            Some("direction"),
+            "D",
+            json!({ "T": 10 }),
+        )));
+        tree.insert(model(
+            "i0",
+            Some("d"),
+            "i",
+            json!({ "i": "el-4", "b": "el-1" }),
+        ));
         json!({ "$ref": "d" })
     }))
     .unwrap();

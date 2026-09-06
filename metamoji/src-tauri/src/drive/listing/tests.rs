@@ -19,7 +19,11 @@ fn archive(entries: &[(&str, &str)]) -> Vec<u8> {
 }
 
 fn ids(listing: &Listing) -> Vec<&str> {
-    listing.documents.iter().map(|d| d.document_id.as_str()).collect()
+    listing
+        .documents
+        .iter()
+        .map(|d| d.document_id.as_str())
+        .collect()
 }
 
 #[test]
@@ -48,7 +52,11 @@ fn folders_come_from_their_paths() {
     )]))
     .unwrap();
 
-    let paths: Vec<&str> = listing.folders.iter().map(|f| f.abs_path.as_str()).collect();
+    let paths: Vec<&str> = listing
+        .folders
+        .iter()
+        .map(|f| f.abs_path.as_str())
+        .collect();
     assert_eq!(paths, ["/国語/", "/算数/", "/算数/4月/"]);
 
     let april = listing.folders.iter().find(|f| f.name == "4月").unwrap();
@@ -112,7 +120,13 @@ fn a_nested_folder_holds_its_own_notes() {
     .unwrap();
 
     let folder_of = |id: &str| {
-        listing.documents.iter().find(|d| d.document_id == id).unwrap().folder_path.clone()
+        listing
+            .documents
+            .iter()
+            .find(|d| d.document_id == id)
+            .unwrap()
+            .folder_path
+            .clone()
     };
     assert_eq!(folder_of("a"), "/算数/");
     assert_eq!(folder_of("b"), "/算数/4月/");
@@ -215,7 +229,11 @@ fn the_archives_other_entries_are_not_reported_as_faults() {
     .unwrap();
 
     assert_eq!(ids(&listing), ["a"]);
-    assert!(listing.unrecognised.is_empty(), "{:?}", listing.unrecognised);
+    assert!(
+        listing.unrecognised.is_empty(),
+        "{:?}",
+        listing.unrecognised
+    );
 }
 
 #[test]
@@ -251,8 +269,11 @@ fn notes_are_ordered_by_title_not_by_archive_order() {
 
 #[test]
 fn a_numeric_revision_is_read_as_a_string() {
-    let listing =
-        parse(archive(&[("documents_1.json", r#"[{"id":"a","contentsRevision":17}]"#)])).unwrap();
+    let listing = parse(archive(&[(
+        "documents_1.json",
+        r#"[{"id":"a","contentsRevision":17}]"#,
+    )]))
+    .unwrap();
     assert_eq!(listing.documents[0].revision.as_deref(), Some("17"));
 }
 

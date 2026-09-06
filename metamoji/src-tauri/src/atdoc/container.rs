@@ -227,7 +227,9 @@ impl ExtraTable {
         if item.type_index == INVALID_TYPE_INDEX {
             return None; // tombstoned slot
         }
-        self.type_dict.get(item.type_index as usize).map(|s| s.as_str())
+        self.type_dict
+            .get(item.type_index as usize)
+            .map(|s| s.as_str())
     }
 }
 
@@ -290,7 +292,10 @@ fn parse_extra_table_v1_v2(buf: &[u8], header: &Header) -> AppResult<ExtraTable>
 
     let version_info = if header.format_version >= 2 {
         let mut r = Reader::at(block, 8);
-        r.u64().ok().map(|pos| read_version_info(buf, pos)).unwrap_or_default()
+        r.u64()
+            .ok()
+            .map(|pos| read_version_info(buf, pos))
+            .unwrap_or_default()
     } else {
         HashMap::new()
     };

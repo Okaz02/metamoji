@@ -83,12 +83,16 @@ fn write_number(v: f64, out: &mut Vec<u8>) {
 }
 
 /// The four shapes `value.rs` decodes into an object, plus a plain map.
-fn write_object(map: &Map<String, Value>, refs: &impl RefIndex, out: &mut Vec<u8>) -> AppResult<()> {
+fn write_object(
+    map: &Map<String, Value>,
+    refs: &impl RefIndex,
+    out: &mut Vec<u8>,
+) -> AppResult<()> {
     if let Some(target) = map.get("$ref") {
         let index = match target {
-            Value::String(id) => refs.index_of(id).ok_or_else(|| {
-                AppError::other(format!("参照先のモデルが見つかりません: {id}"))
-            })?,
+            Value::String(id) => refs
+                .index_of(id)
+                .ok_or_else(|| AppError::other(format!("参照先のモデルが見つかりません: {id}")))?,
             Value::Number(n) => n.as_u64().unwrap_or(0) as u32,
             _ => return Err(AppError::other("モデル参照の形式が不正です")),
         };
@@ -154,8 +158,8 @@ fn write_cstring(text: &str, out: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::atdoc::value::read_value;
     use crate::atdoc::reader::Reader;
+    use crate::atdoc::value::read_value;
     use serde_json::json;
 
     fn no_refs(_: &str) -> Option<u32> {

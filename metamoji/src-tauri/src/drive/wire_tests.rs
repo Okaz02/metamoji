@@ -50,7 +50,10 @@ async fn login_posts_raw_json_not_a_form() {
 async fn the_drive_headers_are_the_sd_ones() {
     let stub = stub(vec![("200 OK", "{}".to_string())]);
     let client = client();
-    client.login(&stub.base, "u-1", Some("x"), None).await.unwrap();
+    client
+        .login(&stub.base, "u-1", Some("x"), None)
+        .await
+        .unwrap();
 
     let seen = stub.seen.recv().unwrap();
     assert_eq!(seen.header("user-agent"), Some("MMJSdCloudService/1.0"));
@@ -69,7 +72,10 @@ async fn a_get_carries_no_body() {
         ("200 OK", r#"{"driveId":"d-1","entryType":2}"#.to_string()),
     ]);
     let client = client();
-    client.login(&stub.base, "u-1", Some("x"), None).await.unwrap();
+    client
+        .login(&stub.base, "u-1", Some("x"), None)
+        .await
+        .unwrap();
 
     let entry_type = client.sync_start("d-1").await.unwrap();
     assert_eq!(entry_type, 2);
@@ -94,7 +100,10 @@ async fn an_expired_drive_session_is_renewed_with_the_same_credential() {
     ]);
 
     let client = client();
-    client.login(&stub.base, "u-1", Some("hunter2"), None).await.unwrap();
+    client
+        .login(&stub.base, "u-1", Some("hunter2"), None)
+        .await
+        .unwrap();
     let revision = client.last_revision("d-1").await.unwrap();
     assert_eq!(revision.as_deref(), Some("42"));
 
@@ -123,7 +132,10 @@ async fn a_failure_shows_the_full_url_and_the_servers_own_text() {
         .to_string();
 
     assert!(err.contains("500"), "{err}");
-    assert!(err.contains(&stub.base), "the URL is the missing half: {err}");
+    assert!(
+        err.contains(&stub.base),
+        "the URL is the missing half: {err}"
+    );
     assert!(err.contains("NullPointerException"), "{err}");
 }
 
@@ -137,10 +149,16 @@ async fn a_stale_cookie_is_dropped_before_signing_in() {
     ]);
 
     let client = client();
-    client.login(&stub.base, "u-1", Some("x"), None).await.unwrap();
+    client
+        .login(&stub.base, "u-1", Some("x"), None)
+        .await
+        .unwrap();
     // The stub set `JSESSIONID` on that reply; the second login must not send
     // it back.
-    client.login(&stub.base, "u-1", Some("x"), None).await.unwrap();
+    client
+        .login(&stub.base, "u-1", Some("x"), None)
+        .await
+        .unwrap();
 
     let _ = stub.seen.recv().unwrap();
     let second = stub.seen.recv().unwrap();

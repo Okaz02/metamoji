@@ -58,8 +58,7 @@ pub struct Listing {
 const DOCUMENTS: &str = "documents_";
 const FOLDERS: &str = "folderdefs_";
 const ORDERS: &str = "childrenorders_";
-const KNOWN_BUT_UNUSED: [&str; 4] =
-    ["tagdefs_", "tagorder.json", "drive.json", "meta.json"];
+const KNOWN_BUT_UNUSED: [&str; 4] = ["tagdefs_", "tagorder.json", "drive.json", "meta.json"];
 
 /// Decodes the zip a drive hands back.
 pub fn parse(bytes: Vec<u8>) -> AppResult<Listing> {
@@ -206,7 +205,11 @@ fn collect_folders(value: &Value, out: &mut Vec<DriveFolder>) -> usize {
             continue;
         }
 
-        let name = path.trim_matches('/').rsplit('/').next().unwrap_or_default();
+        let name = path
+            .trim_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or_default();
         out.push(DriveFolder {
             name: name.to_string(),
             // Given outright, so there is no need to infer it — and no risk of

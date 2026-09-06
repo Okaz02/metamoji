@@ -122,7 +122,11 @@ pub async fn post_strokes(
     };
 
     let device_id = classroom.device_id(cloud).await?;
-    let relay = classroom.rest(cloud).await?.login_room(room_id, None).await?;
+    let relay = classroom
+        .rest(cloud)
+        .await?
+        .login_room(room_id, None)
+        .await?;
 
     // The room hands out its own id for us on login, and stamps it on every
     // element. Until it arrives there is nothing honest to put there.
@@ -203,7 +207,11 @@ pub fn build_posts(
 }
 
 /// The author stamp the room puts on every element.
-pub fn author_of(session: &crate::cloud::CloudSession, room_id: &str, room_user_id: String) -> send::Author {
+pub fn author_of(
+    session: &crate::cloud::CloudSession,
+    room_id: &str,
+    room_user_id: String,
+) -> send::Author {
     send::Author {
         user_id: session.user_id.clone(),
         name: session.name.clone(),
@@ -265,7 +273,11 @@ pub async fn fetch(
     }
 
     let device_id = classroom.device_id(cloud).await?;
-    let relay = classroom.rest(cloud).await?.login_room(room_id, None).await?;
+    let relay = classroom
+        .rest(cloud)
+        .await?
+        .login_room(room_id, None)
+        .await?;
 
     let received: Received = Arc::new(Mutex::new(Vec::new()));
     let seen = Arc::clone(&received);
@@ -411,7 +423,9 @@ fn fold(
 
     for (booth_id, _sequence, payload) in directions {
         let Ok(direction) = apply::decode(&payload) else {
-            *unsupported.entry("読み取れない Direction".into()).or_default() += 1;
+            *unsupported
+                .entry("読み取れない Direction".into())
+                .or_default() += 1;
             continue;
         };
         let Applied {
@@ -475,7 +489,9 @@ mod tests {
         let mut tree = GenericTree::new("root", "$sharenote");
         tree.insert(page("P1", 3));
         assert!(booths_for(&tree, "42").contains(&"P1_[layer-forClass]".to_string()));
-        assert!(!booths_for(&tree, "42").iter().any(|b| b.contains("forUser")));
+        assert!(!booths_for(&tree, "42")
+            .iter()
+            .any(|b| b.contains("forUser")));
     }
 
     #[test]
@@ -502,7 +518,10 @@ mod tests {
         assert_eq!(pull.directions, 1);
         assert_eq!(pull.units, 0);
         assert!(assets.is_empty());
-        assert_eq!(pull.unsupported, vec!["読み取れない Direction x1".to_string()]);
+        assert_eq!(
+            pull.unsupported,
+            vec!["読み取れない Direction x1".to_string()]
+        );
     }
 }
 
@@ -521,7 +540,11 @@ mod survey_tests {
             props.insert("data".into(), data);
             props.insert("target".into(), json!("b_[unit]_draw"));
         }
-        ("b".into(), 1, write_document(&tree, &DocumentMeta::default()).unwrap())
+        (
+            "b".into(),
+            1,
+            write_document(&tree, &DocumentMeta::default()).unwrap(),
+        )
     }
 
     fn model(id: &str, parent: Option<&str>, kind: &str, props: Value) -> GenericModel {
@@ -543,7 +566,12 @@ mod survey_tests {
     fn add(element_id: &str) -> (String, i64, Vec<u8>) {
         direction(|tree| {
             tree.insert(model("d", Some("direction"), "D", json!({ "T": 0 })));
-            tree.insert(model("i0", Some("d"), "i", json!({ "i": element_id, "m": { "$ref": "e" } })));
+            tree.insert(model(
+                "i0",
+                Some("d"),
+                "i",
+                json!({ "i": element_id, "m": { "$ref": "e" } }),
+            ));
             tree.insert(model(
                 "e",
                 Some("direction"),
@@ -558,7 +586,12 @@ mod survey_tests {
     fn remove(element_id: &str) -> (String, i64, Vec<u8>) {
         direction(|tree| {
             tree.insert(model("d", Some("direction"), "D", json!({ "T": 0 })));
-            tree.insert(model("i0", Some("d"), "i", json!({ "i": element_id, "t": 1 })));
+            tree.insert(model(
+                "i0",
+                Some("d"),
+                "i",
+                json!({ "i": element_id, "t": 1 }),
+            ));
             json!({ "$ref": "d" })
         })
     }

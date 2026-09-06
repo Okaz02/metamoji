@@ -15,7 +15,13 @@ use crate::test_support::stub;
 fn client() -> CloudClient {
     // No store path: these tests are about the wire, and a shared session file
     // would let them see each other's state.
-    CloudClient::new("test-machine".into(), "ja_JP".into(), "Asia/Tokyo".into(), None).unwrap()
+    CloudClient::new(
+        "test-machine".into(),
+        "ja_JP".into(),
+        "Asia/Tokyo".into(),
+        None,
+    )
+    .unwrap()
 }
 
 /// What `mpsroot/RequestServlet` really answers.
@@ -105,7 +111,10 @@ async fn login_posts_the_documented_envelope_to_the_tenant() {
     let client = client();
     client.set_root_server(&stub.base);
 
-    let session = client.login("school01", "student01", "hunter2").await.unwrap();
+    let session = client
+        .login("school01", "student01", "hunter2")
+        .await
+        .unwrap();
 
     let resolve = stub.seen.recv().unwrap();
     assert!(resolve.path.starts_with("/mpsroot/RequestServlet"));
@@ -120,7 +129,10 @@ async fn login_posts_the_documented_envelope_to_the_tenant() {
     );
 
     // The four X-DM headers `CsHttpClient` adds to every request.
-    assert_eq!(login.header("x-dm-appversion"), Some("MMJDmCloudService/2.0"));
+    assert_eq!(
+        login.header("x-dm-appversion"),
+        Some("MMJDmCloudService/2.0")
+    );
     assert_eq!(login.header("x-dm-locale"), Some("ja_JP"));
     assert_eq!(
         login.header("x-dm-productname"),
@@ -199,7 +211,10 @@ async fn an_error_code_becomes_the_message_the_user_sees() {
         .to_string();
 
     // The message the server sent, plus the request that produced it.
-    assert!(err.starts_with("ライセンスの有効期限が切れています"), "{err}");
+    assert!(
+        err.starts_with("ライセンスの有効期限が切れています"),
+        "{err}"
+    );
     assert!(err.contains("/users3/login"), "{err}");
     // A refused login must not leave a session behind.
     assert!(client.session().is_none());
@@ -211,7 +226,11 @@ async fn an_http_error_page_does_not_surface_as_a_parse_error() {
     let client = client();
     client.set_root_server(&stub.base);
 
-    let err = client.resolve_school("school01").await.unwrap_err().to_string();
+    let err = client
+        .resolve_school("school01")
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("502"), "{err}");
 }
 
@@ -318,7 +337,10 @@ async fn a_sign_in_survives_a_restart() {
     {
         let client = client_at(&path);
         client.set_root_server(&stub.base);
-        client.login("school01", "student01", "hunter2").await.unwrap();
+        client
+            .login("school01", "student01", "hunter2")
+            .await
+            .unwrap();
         assert!(client.session().is_some());
     }
 
@@ -342,7 +364,7 @@ async fn the_session_cookie_itself_is_restored() {
     let stub = stub(vec![
         ("200 OK", SCHOOL_OK.to_string()),
         ("200 OK", login_ok()),
-        ("200 OK", r#"{"joinCode":"1234","joinEnabled":true}"#.to_string()),
+        ("200 OK", r#"{"drives":[]}"#.to_string()),
     ]);
 
     {
@@ -353,7 +375,7 @@ async fn the_session_cookie_itself_is_restored() {
 
     let restarted = client_at(&path);
     // The stub set `JSESSIONID` on every reply; a restored jar sends it back.
-    let _ = restarted.class_code("d1", false).await;
+    let _ = restarted.drive_entries().await;
     let _ = stub.seen.recv().unwrap();
     let _ = stub.seen.recv().unwrap();
     let third = stub.seen.recv().unwrap();
@@ -385,7 +407,10 @@ async fn signing_out_erases_the_stored_session() {
     assert!(restarted.session().is_none());
     assert!(restarted.collabo_identity().is_none());
     let text = std::fs::read_to_string(&path).unwrap();
-    assert!(!text.contains("Password"), "credential left on disk: {text}");
+    assert!(
+        !text.contains("Password"),
+        "credential left on disk: {text}"
+    );
 }
 
 #[cfg(unix)]
@@ -454,7 +479,10 @@ async fn a_drives_home_is_fetched_with_get() {
     let stub = stub(vec![
         ("200 OK", SCHOOL_OK.to_string()),
         ("200 OK", login_ok()),
-        ("200 OK", r#"{"homeDir":"https://drive.example/x"}"#.to_string()),
+        (
+            "200 OK",
+            r#"{"homeDir":"https://drive.example/x"}"#.to_string(),
+        ),
     ]);
 
     let client = client();
@@ -495,12 +523,18 @@ async fn an_expired_session_is_renewed_rather_than_reported() {
         // The silent re-login.
         ("200 OK", login_ok()),
         // And the retry, which succeeds.
-        ("200 OK", r#"{"uid":"u-1","list":[{"id":"d-1","name":"1年1組"}]}"#.to_string()),
+        (
+            "200 OK",
+            r#"{"uid":"u-1","list":[{"id":"d-1","name":"1年1組"}]}"#.to_string(),
+        ),
     ]);
 
     let client = client();
     client.set_root_server(&stub.base);
-    client.login("school01", "student01", "hunter2").await.unwrap();
+    client
+        .login("school01", "student01", "hunter2")
+        .await
+        .unwrap();
 
     let entries = client.drive_entries().await.expect("recovered");
     assert_eq!(entries.len(), 1);
@@ -582,7 +616,10 @@ async fn a_session_saved_before_the_method_was_recorded_still_renews() {
         ]);
         let client = client_at(&path);
         client.set_root_server(&stub.base);
-        client.login("school01", "student01", "hunter2").await.unwrap();
+        client
+            .login("school01", "student01", "hunter2")
+            .await
+            .unwrap();
     }
 
     let mut saved: serde_json::Value =
@@ -595,7 +632,10 @@ async fn a_session_saved_before_the_method_was_recorded_still_renews() {
     let stub = stub(vec![
         ("200 OK", r#"{"data":{"errorCode":106}}"#.to_string()),
         ("200 OK", login_ok()),
-        ("200 OK", r#"{"list":[{"id":"d-1","name":"1年1組"}]}"#.to_string()),
+        (
+            "200 OK",
+            r#"{"list":[{"id":"d-1","name":"1年1組"}]}"#.to_string(),
+        ),
     ]);
     for key in ["root_server", "rest_host"] {
         saved[key] = serde_json::json!(stub.base);
@@ -632,7 +672,10 @@ fn a_client_with_no_saved_root_server_is_not_pointed_at_production_by_a_test() {
     // is that a test must never then issue a request, which is why every test
     // above calls `set_root_server` before anything else.
     assert_eq!(client.root_server(), crate::cloud::DEFAULT_ROOT_SERVER);
-    assert!(client.session().is_none(), "no session, so no request is possible");
+    assert!(
+        client.session().is_none(),
+        "no session, so no request is possible"
+    );
 }
 
 #[tokio::test]
@@ -705,7 +748,10 @@ async fn a_login_response_with_no_user_id_fails_at_the_login() {
     // Rather than three services later, with a message about a password.
     let stub = stub(vec![
         ("200 OK", SCHOOL_OK.to_string()),
-        ("200 OK", r#"{"loginName":"student01","name":"山田"}"#.to_string()),
+        (
+            "200 OK",
+            r#"{"loginName":"student01","name":"山田"}"#.to_string(),
+        ),
     ]);
     let client = client();
     client.set_root_server(&stub.base);
@@ -737,7 +783,10 @@ async fn a_session_missing_its_user_id_repairs_itself() {
         ]);
         let client = client_at(&path);
         client.set_root_server(&stub.base);
-        client.login("school01", "student01", "hunter2").await.unwrap();
+        client
+            .login("school01", "student01", "hunter2")
+            .await
+            .unwrap();
     }
 
     // Blank the id the way the older parse would have left it.
@@ -793,7 +842,10 @@ async fn a_numeric_user_id_is_read_as_one() {
     // password.
     let stub = stub(vec![
         ("200 OK", SCHOOL_OK.to_string()),
-        ("200 OK", r#"{"uuid":12345,"loginName":"student01"}"#.to_string()),
+        (
+            "200 OK",
+            r#"{"uuid":12345,"loginName":"student01"}"#.to_string(),
+        ),
     ]);
     let client = client();
     client.set_root_server(&stub.base);
@@ -808,7 +860,10 @@ async fn a_null_user_id_says_it_is_null_rather_than_missing() {
     // fixes, and the message is the only place that distinction can surface.
     let stub = stub(vec![
         ("200 OK", SCHOOL_OK.to_string()),
-        ("200 OK", r#"{"uuid":null,"loginName":"student01"}"#.to_string()),
+        (
+            "200 OK",
+            r#"{"uuid":null,"loginName":"student01"}"#.to_string(),
+        ),
     ]);
     let client = client();
     client.set_root_server(&stub.base);
