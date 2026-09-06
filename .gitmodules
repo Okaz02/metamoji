@@ -4,3 +4,6 @@
 [submodule "apk"]
 	path = apk
 	url = https://github.com/metamoji-unofficial/metamoji_apk
+[submodule "docs"]
+	path = docs
+	url = https://github.com/metamoji-unofficial/analyze_result
