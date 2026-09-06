@@ -879,6 +879,15 @@ fn personal_strokes(tree: &GenericTree) -> Vec<Pending> {
 /// `{pageId}_[layer-…]`; anything else is a name this app made up.
 const BOOTH_MARK: &str = "_[layer-";
 
+/// Whether a layer name is one the room will actually deliver to.
+///
+/// Worth asking of anything about to be posted, not just of ink: a Direction
+/// sent to a name the room does not know is accepted and dropped, which from
+/// this side is indistinguishable from success.
+pub fn addresses_a_booth(layer_id: &str) -> bool {
+    layer_id.contains(BOOTH_MARK)
+}
+
 /// What has changed since the room was last told.
 ///
 /// `ledger` is what the room has been told so far. A stroke it does not know
@@ -893,11 +902,11 @@ pub fn changes(tree: &GenericTree, ledger: &[Ledger]) -> (Vec<Pending>, Vec<Ledg
     let all = personal_strokes(tree);
     let stale = all
         .iter()
-        .filter(|p| !p.layer_id.contains(BOOTH_MARK))
+        .filter(|p| !addresses_a_booth(&p.layer_id))
         .count();
     let here: Vec<Pending> = all
         .into_iter()
-        .filter(|p| p.layer_id.contains(BOOTH_MARK))
+        .filter(|p| addresses_a_booth(&p.layer_id))
         .collect();
     let known: std::collections::HashSet<&str> =
         ledger.iter().map(|l| l.stroke_id.as_str()).collect();

@@ -818,7 +818,14 @@ pub async fn classbox_send_strokes(
         if known_units.contains(unit.unit_id()) {
             continue;
         }
-        pending_units.push(unit.into_pending()?);
+        let pending = unit.into_pending()?;
+        // The same guard the ink path applies, for the same reason: a
+        // Direction posted to a layer name the room does not know is accepted
+        // and dropped, and recording it would mean never offering it again.
+        if !collabo::send::addresses_a_booth(pending.layer_id()) {
+            continue;
+        }
+        pending_units.push(pending);
     }
 
     if waiting.is_empty() && removals.is_empty() && pending_units.is_empty() {

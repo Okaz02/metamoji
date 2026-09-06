@@ -24,7 +24,7 @@
  */
 
 import { newId } from "../model/ids";
-import { unitToGenericModel } from "../model/converter";
+import { sourceIdOf, unitToGenericModel } from "../model/converter";
 import { rasterizeUnit } from "../render/renderer";
 import type { AssetResolver } from "../render/renderer";
 import type { NoteDocument, Unit } from "../model/types";
@@ -41,19 +41,37 @@ const SKIP_TYPES: ReadonlySet<Unit["type"]> = new Set(["$draw", "$dummy"]);
  * geometry — see `collabo/send.rs::shape_type_for_kind`. */
 const NATIVE_SHAPE_KINDS: ReadonlySet<string> = new Set(["rect", "ellipse"]);
 
+/** The mark of a real booth id: the classroom names a layer it addresses
+ * `{pageId}_[layer-…]`. `collabo/send.rs`'s `BOOTH_MARK` is the same test on
+ * the ink path, and for the same reason — see `unitsToSend`. */
+const BOOTH_MARK = "_[layer-";
+
 /**
  * `assets` is the editor's own asset cache. Without it a unit whose picture
  * lives in the note's store — `$image`, `$bgimage`, `$pdf` — rasterises to an
  * empty rectangle, and the class is shown a blank where the picture should be.
+ *
+ * A layer is addressed by `sourceIdOf`, never by `layer.id`. The two are
+ * different things on a note taken from a class box: `id` is this app's own
+ * model id, and the classroom knows the layer by the `layerId` it gave it,
+ * which the importer parks alongside. Posting to the model id is posting to a
+ * booth nobody is listening to — it is accepted, it is recorded as sent, and
+ * nothing ever appears in the classroom. That is why the original app showed
+ * a student's ink and none of their shapes: the ink path reads `layerId` from
+ * the saved note on the Rust side and so had the right name all along.
  */
 export function unitsToSend(doc: NoteDocument, assets?: AssetResolver): UnitToSend[] {
   const out: UnitToSend[] = [];
   for (const page of doc.pages) {
     for (const layer of page.layers) {
       if (layer.layerType !== "system:personal") continue;
+      const layerId = sourceIdOf(layer, "layerId");
+      // A layer this app named itself has no booth behind it. Sending to it
+      // would look exactly like sending working, so do not.
+      if (!layerId.includes(BOOTH_MARK)) continue;
       for (const unit of layer.units) {
         if (SKIP_TYPES.has(unit.type)) continue;
-        out.push(unitToSend(unit, layer.id, assets));
+        out.push(unitToSend(unit, layerId, assets));
       }
     }
   }
