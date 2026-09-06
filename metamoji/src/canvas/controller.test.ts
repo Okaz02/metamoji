@@ -86,10 +86,20 @@ function setup(width: number, height: number) {
   };
 }
 
+/** jsdom has no 2D canvas backend, so it never defines the Path2D global either. */
+class StubPath2D {
+  moveTo(): void {}
+  lineTo(): void {}
+  arc(): void {}
+  quadraticCurveTo(): void {}
+  closePath(): void {}
+}
+
 beforeEach(() => {
   vi.stubGlobal("requestAnimationFrame", () => 1);
   vi.stubGlobal("cancelAnimationFrame", () => {});
   vi.stubGlobal("devicePixelRatio", 2);
+  vi.stubGlobal("Path2D", StubPath2D);
 });
 
 describe("CanvasController viewport", () => {
