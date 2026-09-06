@@ -1,0 +1,3 @@
+[submodule "metamoji-api"]
+	path = metamoji-api
+	url = https://github.com/tanahiro2010/metamoji_sdk
