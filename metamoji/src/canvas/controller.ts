@@ -864,6 +864,15 @@ export class CanvasController {
     for (const [unitId, original] of gesture.originals) {
       const located = locate(page, unitId);
       if (!located) continue;
+      // A $draw unit's x/y are nominal — its strokes render at their own
+      // recorded coordinates regardless (see renderer.ts's drawInkUnit) — so
+      // dragging it doesn't move any ink. It only desyncs those nominal
+      // coordinates from the page-sized frame the culling test expects,
+      // which can make every stroke on the layer vanish once it scrolls
+      // off-screen. A lasso/marquee that also caught real units can still
+      // bundle a $draw unit's id into the same gesture, so skip it here
+      // rather than relying on every selection path to exclude it upstream.
+      if (located.unit.type === "$draw") continue;
 
       let after: Partial<Unit>;
       if (gesture.kind === "move") {

@@ -9,8 +9,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CanvasController, type ToolMode } from "./controller";
 import { EditSession } from "../editor/session";
-import { A4_WIDTH, A4_HEIGHT, createDocument, createTextUnit } from "../model/factory";
-import type { Point, Rect } from "../model/types";
+import { A4_WIDTH, A4_HEIGHT, createDocument, createDrawUnit, createTextUnit } from "../model/factory";
+import { strokeBounds } from "../model/stroke";
+import type { InkPoint, PenAttributes, Point, Rect } from "../model/types";
 
 /**
  * jsdom has no canvas backend, so the drawing calls need somewhere to go. The
@@ -299,6 +300,81 @@ describe("CanvasController viewport", () => {
     send("pointerup", loop[0].x, loop[0].y);
 
     expect(toolRequests).toContain("select");
+  });
+
+  it("doesn't drag the page's ink off-screen when a lasso bundles it with another unit", () => {
+    // The bug: a lasso in "overlap" mode selects the whole shared $draw unit
+    // the instant any one stroke touches the loop, even if the loop's real
+    // target was some other unit sitting on top of the ink. Dragging that
+    // other unit then keeps the bundled selection and drags the $draw unit's
+    // nominal x/y along with it — which doesn't move any ink (it renders at
+    // its own stroke coordinates regardless) but does desync those nominal
+    // coordinates from what the renderer's culling test expects, hiding every
+    // stroke on the page once they drift off-screen.
+    const { controller, scene, overlay } = setup(984, 642);
+    const doc = createDocument();
+
+    const shape = createTextUnit(0, 0);
+    shape.width = 200;
+    shape.height = 100;
+
+    const pen: PenAttributes = {
+      color: "#000000",
+      width: 4,
+      penType: "ballpoint",
+      opacity: 1,
+      pressureSensitivity: 0,
+    };
+    const points: InkPoint[] = [{ x: 500, y: 500, p: 0.5, t: 0 }];
+    const draw = createDrawUnit();
+    draw.strokes = [{ id: "s", points, pen, bounds: strokeBounds(points, pen.width) }];
+
+    doc.pages[0].layers[0].units.push(draw, shape);
+
+    const session = new EditSession(doc);
+    controller.attach(scene, overlay);
+    controller.setDocument(doc, 0, session);
+    controller.setTool("lasso");
+    controller.setLassoMode("overlap");
+
+    const vp = controller.getViewport();
+    const toScreen = (wx: number, wy: number) => ({
+      x: wx * vp.scale + vp.tx,
+      y: wy * vp.scale + vp.ty,
+    });
+    const send = (type: string, x: number, y: number, pointerId: number) =>
+      overlay.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId,
+          button: 0,
+          buttons: type === "pointerup" ? 0 : 1,
+          clientX: x,
+          clientY: y,
+          bubbles: true,
+        }),
+      );
+
+    // A loop wide enough to catch both the shape and the stroke at (500, 500).
+    const loop = [toScreen(-50, -50), toScreen(600, -50), toScreen(600, 600), toScreen(-50, 600)];
+    send("pointerdown", loop[0].x, loop[0].y, 10);
+    for (const p of loop.slice(1)) send("pointermove", p.x, p.y, 10);
+    send("pointerup", loop[0].x, loop[0].y, 10);
+
+    // Drag from inside the shape (away from the stroke) — the select tool
+    // keeps the whole bundled selection since the shape was already in it.
+    const dragStart = toScreen(100, 50);
+    const dragEnd = toScreen(300, 250);
+    send("pointerdown", dragStart.x, dragStart.y, 11);
+    send("pointermove", dragEnd.x, dragEnd.y, 11);
+    send("pointerup", dragEnd.x, dragEnd.y, 11);
+
+    const units = session.document.pages[0].layers[0].units;
+    const movedShape = units.find((u) => u.id === shape.id)!;
+    const stillDraw = units.find((u) => u.id === draw.id)!;
+
+    expect(movedShape.x).not.toBe(0);
+    expect(stillDraw.x).toBe(0);
+    expect(stillDraw.y).toBe(0);
   });
 
   it("zooms about a point without moving the world point under it", () => {
