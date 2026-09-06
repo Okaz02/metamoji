@@ -781,6 +781,16 @@ impl NoteStore {
                 layer_id   TEXT NOT NULL
             );
 
+            -- The non-ink counterpart: one row per unit (text natively, or a
+            -- shape/form/etc. sent as a rasterised image) the room has been
+            -- told about, keyed by the note's own unit id so a later save does
+            -- not send the same unit twice.
+            CREATE TABLE IF NOT EXISTS room_units (
+                unit_id    TEXT PRIMARY KEY,
+                element_id TEXT NOT NULL,
+                layer_id   TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS assets (
                 id       TEXT PRIMARY KEY,
                 mime     TEXT NOT NULL,
@@ -999,6 +1009,40 @@ impl NoteStore {
             "DELETE FROM room_strokes WHERE stroke_id = ?1",
             params![stroke_id],
         )?;
+        Ok(())
+    }
+
+    pub fn remember_room_unit(
+        &self,
+        unit_id: &str,
+        element_id: &str,
+        layer_id: &str,
+    ) -> AppResult<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO room_units(unit_id, element_id, layer_id)
+             VALUES (?1, ?2, ?3)",
+            params![unit_id, element_id, layer_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn room_units(&self) -> AppResult<Vec<crate::collabo::send::UnitLedger>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT unit_id, element_id, layer_id FROM room_units ORDER BY unit_id")?;
+        let rows = stmt.query_map([], |r| {
+            Ok(crate::collabo::send::UnitLedger {
+                unit_id: r.get(0)?,
+                element_id: r.get(1)?,
+                layer_id: r.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn forget_room_unit(&self, unit_id: &str) -> AppResult<()> {
+        self.conn
+            .execute("DELETE FROM room_units WHERE unit_id = ?1", params![unit_id])?;
         Ok(())
     }
 

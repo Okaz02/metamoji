@@ -211,6 +211,23 @@ export function toGeneric(doc: NoteDocument): GenericTree {
   return tree;
 }
 
+/**
+ * A single unit as the generic model the classroom wire and the file format
+ * both use — the same shape `toGeneric` builds for it inside a document, but
+ * standalone, for sending one unit on its own (see the classroom sync path in
+ * `EditorScreen`, which sends a unit the room already understands — `$text`
+ * today — as a new element wrapping this).
+ */
+export function unitToGenericModel(unit: Unit): GenericModel {
+  return {
+    id: unit.id,
+    parentId: null,
+    modelType: unitModelType(unit),
+    props: unitToProps(unit),
+    children: [],
+  };
+}
+
 function unitModelType(unit: Unit): string {
   // A degraded unit keeps reporting its original tag so re-export is faithful.
   if (unit.type === "$dummy" && unit.degraded) return unit.degraded.originalModelType;

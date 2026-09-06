@@ -20,12 +20,14 @@
 //! payload is a serialised model and there is no reader for it up there.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use super::apply::{self, Change};
+use super::pull::{self, AckTally, Batch, LoginSlot, Record};
 use super::session::ClassroomState;
 use super::socket::{self, CollaboEvent, Command, Connection};
 use crate::cloud::CloudClient;
@@ -82,20 +84,31 @@ pub struct Watch {
     /// The id the room gave us when we logged in. It goes on every element we
     /// send, and only the room knows it.
     room_user_id: Arc<Mutex<Option<String>>>,
+    /// False once anything has ended the room session. A watch that is not
+    /// alive must not be posted through — see `post`.
+    alive: Arc<AtomicBool>,
+    /// The relay's answers to what has been posted here.
+    acks: AckTally,
 }
 
 impl Watch {
-    /// Sends through the connection this note already has.
+    /// Sends through the connection this note already has, and hands back
+    /// what the relay confirmed.
     ///
     /// The alternative — a second connection, post, `LogoutRoom` — ends the
     /// room session for the whole device, and takes this watch down with it.
     /// That is what made updates stop arriving after the first send.
-    pub async fn post(&self, frames: Vec<super::pull::Frame>) {
-        for (booth_id, payload) in frames {
-            super::pull::post(&self.connection, &booth_id, payload).await;
-        }
-        // The writer task is a queue; give the acknowledgements a moment.
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    pub async fn post(&self, batches: Vec<Batch>) -> Vec<Record> {
+        pull::post_batches(&self.connection, &self.acks, &batches).await
+    }
+
+    /// Whether this watch is still in the room.
+    ///
+    /// Worth asking before posting, because a watch that is not stops looking
+    /// any different from the outside: the socket may well still be open, and
+    /// handing frames to it succeeds right up until the writer task notices.
+    pub fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::SeqCst)
     }
 
     pub fn room_user_id(&self) -> String {
@@ -148,8 +161,12 @@ pub async fn start(
     let emitter = app.clone();
     let note = note_id.to_string();
     let sink = Arc::clone(&store);
-    let room_user_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let identity = Arc::clone(&room_user_id);
+    let alive = Arc::new(AtomicBool::new(true));
+    let acks: AckTally = Default::default();
+    let login: LoginSlot = Default::default();
+    let watching_alive = Arc::clone(&alive);
+    let watching_acks = Arc::clone(&acks);
+    let watching_login = Arc::clone(&login);
     // Filled the moment `connect` returns. The handler needs to answer
     // `BoothUpdated` with an `AttachBooth`, and the sender only exists once the
     // socket does.
@@ -157,15 +174,37 @@ pub async fn start(
     let replies = Arc::clone(&commands);
 
     let connection = socket::connect(&relay.host, relay.port, move |event| {
-        if let CollaboEvent::LoggedIn { user_id, .. } = &event {
-            *identity.lock().unwrap() = user_id.clone();
-            return;
-        }
-        if let CollaboEvent::Disconnected { reason } = &event {
+        pull::note_login(&watching_login, &event);
+        pull::note_ack(&watching_acks, &event);
+
+        // Everything that ends the room session, treated as ending it. Until
+        // this was here a watch whose room had gone on without it still
+        // looked usable: saves posted into it, nothing reached the class, and
+        // every stroke was written down as sent — permanently, because the
+        // ledger is what decides whether a stroke is ever offered again.
+        // `Finish` is the one that hid best, since it leaves the socket up
+        // and so nothing else had any reason to notice.
+        let ended = match &event {
+            CollaboEvent::Disconnected { reason } => Some(reason.clone()),
+            CollaboEvent::Finished => Some("教室のセッションが終了しました".to_string()),
+            CollaboEvent::LoggedIn {
+                ok: false, message, ..
+            } => Some(
+                message
+                    .clone()
+                    .unwrap_or_else(|| "教室に入れませんでした".to_string()),
+            ),
+            _ => None,
+        };
+        if let Some(reason) = ended {
+            watching_alive.store(false, Ordering::SeqCst);
             let _ = emitter.emit(
                 EVENT_ENDED,
                 serde_json::json!({ "noteId": note, "reason": reason }),
             );
+            return;
+        }
+        if matches!(event, CollaboEvent::LoggedIn { .. }) {
             return;
         }
         // "That booth has something new." The relay says this instead of
@@ -241,7 +280,11 @@ pub async fn start(
         })
         .await
         .ok();
-    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    // The room's own answer, not a guess at how long one takes to arrive. A
+    // booth attached before the room considers us to be in it is answered
+    // with nothing, and a watch that was refused outright is one that
+    // swallows every stroke posted through it.
+    let room_user_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(pull::await_login(&login).await?));
 
     for booth in booths {
         connection
@@ -274,6 +317,8 @@ pub async fn start(
         connection,
         room_id: room_id.to_string(),
         room_user_id,
+        alive,
+        acks,
     })
 }
 

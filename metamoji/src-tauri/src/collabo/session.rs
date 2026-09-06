@@ -140,25 +140,32 @@ impl ClassroomState {
     }
 
     /// Sends through the connection an open note already has, if it is the
-    /// note in question. `None` means there is none and the caller has to make
-    /// its own — which is fine when nothing is watching, and fatal when
-    /// something is: logging out ends the room session for the whole device.
+    /// note in question and that connection is still in the room. `None` means
+    /// there is none and the caller has to make its own — which is fine when
+    /// nothing is watching, and fatal when something is: logging out ends the
+    /// room session for the whole device.
+    ///
+    /// A watch that has been ended is treated as absent rather than used: it
+    /// still takes frames without complaining, and everything posted through
+    /// it is lost.
     pub async fn post_for_note(
         &self,
         note_id: &str,
-        frames: Vec<super::pull::Frame>,
-    ) -> Option<String> {
+        batches: Vec<super::pull::Batch>,
+    ) -> Option<Vec<super::pull::Record>> {
         let held = self.watching.lock().await;
-        let watch = held.as_ref().filter(|w| w.note_id == note_id)?;
-        let room_user_id = watch.room_user_id();
-        watch.post(frames).await;
-        Some(room_user_id)
+        let watch = held
+            .as_ref()
+            .filter(|w| w.note_id == note_id && w.is_alive())?;
+        Some(watch.post(batches).await)
     }
 
     /// The room this note is being watched in, and who the room thinks we are.
     pub async fn watch_identity(&self, note_id: &str) -> Option<(String, String)> {
         let held = self.watching.lock().await;
-        let watch = held.as_ref().filter(|w| w.note_id == note_id)?;
+        let watch = held
+            .as_ref()
+            .filter(|w| w.note_id == note_id && w.is_alive())?;
         Some((watch.room_id.clone(), watch.room_user_id()))
     }
 

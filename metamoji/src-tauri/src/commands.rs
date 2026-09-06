@@ -17,7 +17,7 @@ use crate::collabo::{
 };
 use crate::drive::{self, listing::Listing, DriveClient};
 use crate::error::{AppError, AppResult};
-use crate::model::{AppStatus, GenericTree, NoteSummary};
+use crate::model::{AppStatus, GenericModel, GenericTree, NoteSummary};
 use crate::state::AppState;
 use crate::storage::{now_iso, Folder, ListQuery, NoteStore, Tag};
 
@@ -789,6 +789,7 @@ pub async fn classbox_send_strokes(
     classroom: State<'_, ClassroomState>,
     drive: State<'_, DriveClient>,
     note_id: String,
+    units: Vec<UnitToSend>,
 ) -> AppResult<usize> {
     let Some(origin) = state.catalog.lock().unwrap().class_origin(&note_id)? else {
         // Not a copy of anything: an ordinary note has nowhere to send to.
@@ -806,7 +807,21 @@ pub async fn classbox_send_strokes(
         ledger
     };
     let (waiting, removals, stale) = collabo::send::changes(&tree, &ledger);
-    if waiting.is_empty() && removals.is_empty() {
+
+    let known_units: std::collections::HashSet<String> = {
+        let store = state.note(&note_id)?;
+        let ledger = store.lock().unwrap().room_units()?;
+        ledger.into_iter().map(|l| l.unit_id).collect()
+    };
+    let mut pending_units = Vec::new();
+    for unit in units {
+        if known_units.contains(unit.unit_id()) {
+            continue;
+        }
+        pending_units.push(unit.into_pending()?);
+    }
+
+    if waiting.is_empty() && removals.is_empty() && pending_units.is_empty() {
         if stale > 0 {
             return Err(AppError::other(
                 "このノートは古い形式で取り込まれているため、教室に送れません。\
@@ -816,58 +831,211 @@ pub async fn classbox_send_strokes(
         return Ok(0);
     }
 
-    // The room id is kept with the note precisely so this does not need the
-    // drive service, which is only signed in while a class box is open. The
-    // lookup is the fallback for notes taken before it was recorded.
-    let room_id = match origin.room_id.clone() {
-        Some(room_id) => room_id,
-        None => {
-            let room_id = room_id_of(&drive, &origin.drive_id, &origin.document_id)
-                .await
-                .map_err(|e| {
-                    AppError::other(format!(
-                        "このノートの教室が分かりません。クラスボックスから開き直してください ({e})"
-                    ))
-                })?
-                .ok_or_else(|| AppError::other("このノートには教室がありません"))?;
-            state.catalog.lock().unwrap().set_class_origin(
-                &note_id,
-                &origin.drive_id,
-                &origin.document_id,
-                Some(&room_id),
-            )?;
-            room_id
-        }
-    };
+    let room_id = resolve_room_id(&state, &drive, &note_id, &origin).await?;
 
-    // Through the note's own connection when it has one. Opening a second and
-    // logging out of it ends the room session for the whole device, which is
-    // what stopped updates arriving after the first send.
-    let posted = match classroom.watch_identity(&note_id).await {
+    // One connection for both strokes and units — through the note's own when
+    // it has one, or a single fresh one otherwise. Opening a second on top of
+    // an existing one ends the room session for the whole device, and that
+    // includes a second connection opened right after the first closes: two
+    // sends racing their own connect/disconnect cycles back to back is what
+    // made sends after a save unreliable, not just slow.
+    let watched = match classroom.watch_identity(&note_id).await {
         Some((watched_room, room_user_id)) if watched_room == room_id => {
             let Some(session) = cloud.session() else {
                 return Err(AppError::other("サインインしていません"));
             };
             let author = collabo::pull::author_of(&session, &room_id, room_user_id);
-            let (frames, posted) = collabo::pull::build_posts(&waiting, &removals, &author)?;
-            classroom.post_for_note(&note_id, frames).await;
-            posted
+            let mut batches = collabo::pull::build_posts(&waiting, &removals, &author)?;
+            batches.extend(collabo::pull::build_unit_posts(&pending_units, &author)?);
+            // `None` if the watch ended between being asked about and being
+            // posted to; the fresh connection below is then the way out.
+            classroom.post_for_note(&note_id, batches).await
         }
-        _ => collabo::pull::post_strokes(&cloud, &classroom, &room_id, &waiting, &removals).await?,
+        _ => None,
+    };
+    let records = match watched {
+        Some(records) => records,
+        None => {
+            collabo::pull::post_all(&cloud, &classroom, &room_id, &waiting, &removals, &pending_units)
+                .await?
+        }
     };
 
-    // Recorded only after the relay has had them, and only as far as it got.
+    // Recorded only for what the relay actually acknowledged. Anything it did
+    // not stays unrecorded, which is exactly what makes the next save offer it
+    // again — a row written for a post that never landed is never revisited,
+    // and is why writing went missing from the classroom at random.
+    //
     // The note itself is not touched: the editor owns it while it is open, and
     // writing behind its back loses whatever it saves next.
     let store = state.note(&note_id)?;
     let store = store.lock().unwrap();
-    for (pending, element_id) in waiting.iter().zip(posted.sent.iter()) {
-        store.remember_room_stroke(&pending.stroke_id, element_id, &pending.layer_id)?;
+    for record in &records {
+        match record {
+            collabo::pull::Record::Stroke {
+                stroke_id,
+                element_id,
+                layer_id,
+            } => store.remember_room_stroke(stroke_id, element_id, layer_id)?,
+            collabo::pull::Record::Erased { stroke_id } => store.forget_room_stroke(stroke_id)?,
+            collabo::pull::Record::Unit {
+                unit_id,
+                element_id,
+                layer_id,
+            } => store.remember_room_unit(unit_id, element_id, layer_id)?,
+        }
     }
-    for stroke_id in &posted.removed {
-        store.forget_room_stroke(stroke_id)?;
+    Ok(records.len())
+}
+
+/// The room id for a note, kept with it precisely so this does not need the
+/// drive service, which is only signed in while a class box is open. The
+/// lookup is the fallback for notes taken before it was recorded, and — once
+/// found — is written back so later sends do not pay for it again.
+async fn resolve_room_id(
+    state: &State<'_, AppState>,
+    drive: &State<'_, DriveClient>,
+    note_id: &str,
+    origin: &crate::storage::ClassOrigin,
+) -> AppResult<String> {
+    if let Some(room_id) = origin.room_id.clone() {
+        return Ok(room_id);
     }
-    Ok(posted.sent.len() + posted.removed.len())
+    let room_id = room_id_of(drive, &origin.drive_id, &origin.document_id)
+        .await
+        .map_err(|e| {
+            AppError::other(format!(
+                "このノートの教室が分かりません。クラスボックスから開き直してください ({e})"
+            ))
+        })?
+        .ok_or_else(|| AppError::other("このノートには教室がありません"))?;
+    state.catalog.lock().unwrap().set_class_origin(
+        note_id,
+        &origin.drive_id,
+        &origin.document_id,
+        Some(&room_id),
+    )?;
+    Ok(room_id)
+}
+
+/// One non-ink unit the editor has decided needs sending, as it arrives over
+/// IPC. The editor does the rasterising for anything the room has no native
+/// format for (there is no vector renderer here to do it with) — this is
+/// already either the unit's own model or a finished PNG.
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum UnitToSend {
+    #[serde(rename_all = "camelCase")]
+    Native {
+        unit_id: String,
+        layer_id: String,
+        models: Vec<GenericModel>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Shape {
+        unit_id: String,
+        layer_id: String,
+        /// This app's own `ShapeKind` (`"rect"`/`"ellipse"`) — `sendUnits.ts`
+        /// has already checked it's one of the two kinds this build can send
+        /// natively. Mapped to the room's own `DrShapeType` ordinal here
+        /// (`send::shape_type_for_kind`), not on the TS side, so the mapping
+        /// has one home.
+        shape_kind: String,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        stroke_color: String,
+        stroke_width: f64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Image {
+        unit_id: String,
+        layer_id: String,
+        ticket: String,
+        mime: String,
+        png_base64: String,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    },
+}
+
+impl UnitToSend {
+    fn unit_id(&self) -> &str {
+        match self {
+            UnitToSend::Native { unit_id, .. } => unit_id,
+            UnitToSend::Shape { unit_id, .. } => unit_id,
+            UnitToSend::Image { unit_id, .. } => unit_id,
+        }
+    }
+
+    fn into_pending(self) -> AppResult<collabo::send::PendingUnit> {
+        Ok(match self {
+            UnitToSend::Native {
+                unit_id,
+                layer_id,
+                models,
+            } => collabo::send::PendingUnit::Native {
+                unit_id,
+                layer_id,
+                models,
+            },
+            UnitToSend::Shape {
+                unit_id,
+                layer_id,
+                shape_kind,
+                x,
+                y,
+                width,
+                height,
+                stroke_color,
+                stroke_width,
+            } => {
+                let shape_type = collabo::send::shape_type_for_kind(&shape_kind).ok_or_else(|| {
+                    AppError::other(format!("送信できない図形の種類です: {shape_kind}"))
+                })?;
+                collabo::send::PendingUnit::Shape {
+                    unit_id,
+                    layer_id,
+                    shape_type,
+                    x,
+                    y,
+                    width,
+                    height,
+                    stroke_color,
+                    stroke_width,
+                }
+            }
+            UnitToSend::Image {
+                unit_id,
+                layer_id,
+                ticket,
+                mime,
+                png_base64,
+                x,
+                y,
+                width,
+                height,
+            } => {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(png_base64)
+                    .map_err(|e| AppError::other(format!("画像データが不正です: {e}")))?;
+                collabo::send::PendingUnit::Image {
+                    unit_id,
+                    layer_id,
+                    ticket,
+                    mime,
+                    bytes,
+                    x,
+                    y,
+                    width,
+                    height,
+                }
+            }
+        })
+    }
 }
 
 /// What a resync found, in words the user can act on.
@@ -935,6 +1103,14 @@ pub async fn classnote_resync(
     let mut scratch = tree.clone();
     let (pull, _) =
         collabo::pull::fetch(&cloud, &classroom, &room_id, &mut scratch, &ledger).await?;
+    // A read that failed comes back empty, and an empty history is
+    // indistinguishable from a room holding nothing — which this would then
+    // "repair" by throwing away the whole ledger and posting the note's
+    // entire contents again. Say so and change nothing instead.
+    if let Some(err) = pull.error {
+        report.problems.push(err);
+        return Ok(report);
+    }
     let room = collabo::pull::survey(&pull.history);
     report.in_room = room.added.difference(&room.removed).count();
 
@@ -1012,6 +1188,7 @@ async fn send_missing(
         classroom.clone(),
         drive.clone(),
         note_id.to_string(),
+        Vec::new(),
     )
     .await
 }

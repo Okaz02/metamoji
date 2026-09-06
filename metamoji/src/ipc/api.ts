@@ -754,13 +754,59 @@ export async function classboxOrigin(noteId: string): Promise<ClassOrigin | null
 }
 
 /**
- * Sends everything written on this note's own layers to its classroom, and
- * returns how many strokes went. Already-sent strokes are skipped, so calling
- * it after every save is the intended use.
+ * One non-ink unit to send to the classroom: a type the room understands on
+ * its own (`$text` today) sent as its own generic model; a plain rectangle or
+ * ellipse sent as a real drawing-engine shape element (the same wire shape a
+ * pen stroke uses, sharing its "S" pen style for outline colour/width); or,
+ * for anything else, a rasterised PNG the caller already produced (see
+ * `render/renderer.ts`'s `rasterizeUnit`) — there is no vector renderer on
+ * the Rust side to make that picture from the unit itself.
  */
-export async function classboxSendStrokes(noteId: string): Promise<number> {
+export type UnitToSend =
+  | { kind: "native"; unitId: string; layerId: string; models: GenericModel[] }
+  | {
+      kind: "shape";
+      unitId: string;
+      layerId: string;
+      /** This app's own `ShapeKind` — only `"rect"`/`"ellipse"` are sendable
+       * this way; `unitsToSend` has already checked before choosing this kind. */
+      shapeKind: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      strokeColor: string;
+      strokeWidth: number;
+    }
+  | {
+      kind: "image";
+      unitId: string;
+      layerId: string;
+      ticket: string;
+      mime: string;
+      pngBase64: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    };
+
+/**
+ * Sends everything written on this note's own layers to its classroom — ink
+ * strokes and, alongside them in the same connection, whichever of `units`
+ * the room has not already been told about — and returns how many things
+ * went out in total. Already-sent strokes and units are skipped on their own,
+ * so calling this after every save is the intended use.
+ *
+ * Ink and units go out together deliberately: the relay allows one connection
+ * per device, so sending them as two separate calls opened a second
+ * connection right on the heels of the first closing, which raced its
+ * teardown instead of waiting for it — the actual cause of sends after a save
+ * being unreliable, not just doubled network cost.
+ */
+export async function classboxSendStrokes(noteId: string, units: UnitToSend[] = []): Promise<number> {
   if (!isTauri()) return 0;
-  return invoke<number>("classbox_send_strokes", { noteId });
+  return invoke<number>("classbox_send_strokes", { noteId, units });
 }
 
 /**

@@ -29,6 +29,43 @@ use super::direction::{self, DirectionData};
 use crate::error::{AppError, AppResult};
 use crate::model::{GenericModel, GenericTree};
 
+/// `DrElementType.UNIT`: an element that wraps an ordinary unit model rather
+/// than carrying its own geometry, the way a stroke does. Confirmed against
+/// the decompiled enum (`DrElementType.smali`) rather than inferred: `NONE`,
+/// `UNKNOWN`, `STROKE`, `UNIT`, `SHAPE`, `ARROW` in that ordinal order, each
+/// stored value one less than its ordinal (`NONE` alone is `-1`).
+const ELEMENT_TYPE_UNIT: i64 = 2;
+/// `DrElementType.SHAPE`, same enum, same source. A shape is drawn the way a
+/// stroke is — an element on the layer's drawing booth referencing an "S" pen
+/// style for its outline colour/width — not wrapped as a placed unit the way
+/// `ELEMENT_TYPE_UNIT` is. That's `DrShapeElement extends DrRectBaseElement`,
+/// confirmed against its own decompiled property keys (`"p"` for the pen
+/// style ref, `"t"` for which shape, `"s"` for segmental).
+const ELEMENT_TYPE_SHAPE: i64 = 3;
+/// `DrElementBaseType.RECT`, same `ordinal - 1` scheme, confirmed the same way.
+const BASE_TYPE_RECT: i64 = 1;
+/// `DrShapeType`, confirmed against the decompiled enum
+/// (`DrShapeType.smali`) — `ordinal - 2` this time (`UNKNOWN`/`NONE` sit at
+/// `-2`/`-1`). Only the two kinds this app can send with confidence about
+/// their geometry: a plain rectangle and a plain ellipse, both needing
+/// nothing beyond `DrRectBaseElement`'s own `X`/`Y`/`W`/`H`. Everything else
+/// (arrows, balloons, the rectangle's own decorative corner system) has
+/// enough undocumented required fields that guessing at them risks sending
+/// something the real reader rejects outright — safer to rasterise those.
+const SHAPE_TYPE_RECTANGLE: i64 = 2;
+const SHAPE_TYPE_DISK: i64 = 3;
+
+/// This app's own `ShapeKind` (`src/model/types.ts`) to `DrShapeType`, for the
+/// two kinds `add_shape` can send. `None` for anything else — the caller
+/// falls back to rasterising it instead.
+pub fn shape_type_for_kind(kind: &str) -> Option<i64> {
+    match kind {
+        "rect" => Some(SHAPE_TYPE_RECTANGLE),
+        "ellipse" => Some(SHAPE_TYPE_DISK),
+        _ => None,
+    }
+}
+
 /// `DrUtIdGenerator.CHARSET_TABLE`, and the base its numbers are written in.
 const CHARSET: &[u8; 92] =
     b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz\"#$%&'()*+,-./:;<=>@[\\]^_`{|}~";
@@ -195,6 +232,303 @@ pub fn add_stroke(
     Ok((payload, element_id))
 }
 
+/// Builds the payload that adds a plain rectangle or ellipse to `layer_id`'s
+/// drawing booth as a genuine `DrShapeElement` — the same wire shape the room
+/// itself uses for a shape, not a picture standing in for one. Reuses the
+/// exact same "S" pen-style model `add_stroke` does: `DrShapeElement`'s own
+/// `"p"` property is a pen-style reference too, confirmed against its
+/// decompiled property keys, so a shape's outline colour and width travel
+/// the identical way a stroke's do.
+///
+/// `shape_type` is one of `SHAPE_TYPE_RECTANGLE`/`SHAPE_TYPE_DISK` — the only
+/// two kinds whose geometry is confidently just `X`/`Y`/`W`/`H`. Anything
+/// else has to go out rasterised; see `PendingUnit::Image`.
+#[derive(Debug, Clone, Copy)]
+pub struct Shape<'a> {
+    pub shape_type: i64,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub stroke_color: &'a str,
+    pub stroke_width: f64,
+}
+
+pub fn add_shape(
+    shape: &Shape,
+    layer_id: &str,
+    ids: &mut IdGenerator,
+    author: &Author,
+    edit_status_id: Option<&str>,
+) -> AppResult<(Vec<u8>, String)> {
+    let Shape {
+        shape_type,
+        x,
+        y,
+        width,
+        height,
+        stroke_color,
+        stroke_width,
+    } = *shape;
+    let element_id = ids.next_id();
+    let style_id = ids.next_id();
+    let collaboration_id = ids.next_id();
+
+    let mut tree = GenericTree::new("d", "D");
+    if let Value::Object(props) = &mut tree.models.get_mut("d").unwrap().props {
+        props.insert("T".into(), json!(DIRECTION_ADD_REMOVE));
+        props.insert("V".into(), json!(DIRECTION_VERSION));
+        props.insert("M".into(), json!(MODULE_VERSION));
+        props.insert("O".into(), json!(MODULE_ACCEPTABLE_VERSION));
+        props.insert("C".into(), json!(collaboration_id));
+    }
+
+    tree.insert(GenericModel {
+        id: "i0".into(),
+        parent_id: Some("d".into()),
+        model_type: "i".into(),
+        props: json!({
+            "i": element_id,
+            "m": { "$ref": "e" },
+            "s": 0,
+            "e": 0,
+            "t": EXECUTION_ADD,
+        }),
+        children: Vec::new(),
+    });
+
+    tree.insert(detached(GenericModel {
+        id: "e".into(),
+        parent_id: Some("d".into()),
+        model_type: "E".into(),
+        props: json!({
+            "I": element_id,
+            "T": ELEMENT_TYPE_SHAPE,
+            "B": BASE_TYPE_RECT,
+            "t": shape_type,
+            "s": false,
+            "p": { "$ref": "s" },
+            "X": x, "Y": y, "W": width, "H": height,
+            // A rect/ellipse's bounding box is its own frame — no pen-width
+            // padding the way a stroke's is.
+            "BX": x, "BY": y, "BW": width, "BH": height,
+            "uII": author.user_id,
+            "uIN": author.name,
+            "uIG": author.company_id,
+            "uIR": author.room_id,
+            "uIC": author.room_user_id,
+            "uIT": now_seconds(),
+        }),
+        children: Vec::new(),
+    }));
+
+    tree.insert(detached(GenericModel {
+        id: "s".into(),
+        parent_id: Some("d".into()),
+        model_type: "S".into(),
+        props: json!({
+            "I": style_id,
+            "C": stroke_color.trim_start_matches('#').to_ascii_uppercase(),
+            "W": stroke_width,
+            "A": 1.0,
+            "P": 0,
+        }),
+        children: Vec::new(),
+    }));
+
+    let payload = direction::encode(
+        DirectionData::Model(tree),
+        &format!("{layer_id}_[unit]_draw"),
+        edit_status_id,
+        Default::default(),
+    )?;
+    Ok((payload, element_id))
+}
+
+/// Builds the payload that adds a brand-new, non-ink unit — `$text` today —
+/// to `layer_id`, wrapped the way the room expects a *new* element: a `D`
+/// add-record whose `E` element is `T=UNIT` rather than `T=STROKE`, pointing
+/// at the unit's own model instead of carrying points and a pen.
+///
+/// `unit_models` is the unit's own model first, then anything it references —
+/// the same shape `apply::Change::Unit` decodes back out, and the same shape
+/// this app's own file format already carries (`converter.ts`'s `toGeneric`),
+/// so nothing about the unit's properties needs translating here.
+///
+/// Unlike ink, this only covers unit types the room already understands
+/// natively (`apply.rs`'s own vocabulary comment: `$text`, `$image`, `$web`).
+/// Everything else has to go out as a rasterised image instead — see
+/// `add_attachment` and its caller.
+pub fn add_unit(
+    unit_models: &[GenericModel],
+    layer_id: &str,
+    ids: &mut IdGenerator,
+    author: &Author,
+    edit_status_id: Option<&str>,
+) -> AppResult<(Vec<u8>, String)> {
+    let root = unit_models
+        .first()
+        .ok_or_else(|| AppError::other("送るユニットがありません"))?;
+    let element_id = ids.next_id();
+    let collaboration_id = ids.next_id();
+
+    let (x, y, w, h) = (
+        root.props.get("x").and_then(Value::as_f64).unwrap_or(0.0),
+        root.props.get("y").and_then(Value::as_f64).unwrap_or(0.0),
+        root.props.get("width").and_then(Value::as_f64).unwrap_or(0.0),
+        root.props.get("height").and_then(Value::as_f64).unwrap_or(0.0),
+    );
+
+    let mut tree = GenericTree::new("d", "D");
+    if let Value::Object(props) = &mut tree.models.get_mut("d").unwrap().props {
+        props.insert("T".into(), json!(DIRECTION_ADD_REMOVE));
+        props.insert("V".into(), json!(DIRECTION_VERSION));
+        props.insert("M".into(), json!(MODULE_VERSION));
+        props.insert("O".into(), json!(MODULE_ACCEPTABLE_VERSION));
+        props.insert("C".into(), json!(collaboration_id));
+    }
+
+    tree.insert(GenericModel {
+        id: "i0".into(),
+        parent_id: Some("d".into()),
+        model_type: "i".into(),
+        props: json!({
+            "i": element_id,
+            "m": { "$ref": "e" },
+            "s": 0,
+            "e": 0,
+            "t": EXECUTION_ADD,
+        }),
+        children: Vec::new(),
+    });
+
+    tree.insert(detached(GenericModel {
+        id: "e".into(),
+        parent_id: Some("d".into()),
+        model_type: "E".into(),
+        props: json!({
+            "I": element_id,
+            "T": ELEMENT_TYPE_UNIT,
+            "B": BASE_TYPE_RECT,
+            "X": x,
+            "Y": y,
+            "W": w,
+            "H": h,
+            // `DrElement`'s own bounding box, alongside `DrRectBaseElement`'s
+            // X/Y/W/H — every element carries both (a stroke's BX/BY/BW/BH is
+            // its points padded by the pen's width; a rect-based element's is
+            // just its own frame, so the two pairs are identical here).
+            "BX": x, "BY": y, "BW": w, "BH": h,
+            "u": { "$ref": "u0" },
+            "uII": author.user_id,
+            "uIN": author.name,
+            "uIG": author.company_id,
+            "uIR": author.room_id,
+            "uIC": author.room_user_id,
+            "uIT": now_seconds(),
+        }),
+        children: Vec::new(),
+    }));
+
+    // The unit's own models, renamed onto the tree with an id this function
+    // controls (`u0`, `u1`, …) rather than whatever ids they arrived under —
+    // two units sent in the same `IdGenerator`'s lifetime must not collide.
+    let rename = |id: &str| -> String {
+        match unit_models.iter().position(|m| m.id == id) {
+            Some(i) => format!("u{i}"),
+            None => id.to_string(),
+        }
+    };
+    for (i, model) in unit_models.iter().enumerate() {
+        let mut props = model.props.clone();
+        rewrite_model_refs(&mut props, &rename);
+        tree.insert(detached(GenericModel {
+            id: format!("u{i}"),
+            parent_id: Some("d".into()),
+            model_type: model.model_type.clone(),
+            props,
+            children: Vec::new(),
+        }));
+    }
+
+    let payload = direction::encode(
+        DirectionData::Model(tree),
+        &format!("{layer_id}_[unit]_draw"),
+        edit_status_id,
+        Default::default(),
+    )?;
+    Ok((payload, element_id))
+}
+
+fn rewrite_model_refs(value: &mut Value, rename: &impl Fn(&str) -> String) {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::String(id)) = map.get("$ref") {
+                let renamed = rename(id);
+                map.insert("$ref".into(), Value::String(renamed));
+                return;
+            }
+            let keys: Vec<String> = map.keys().cloned().collect();
+            for key in keys {
+                if let Some(child) = map.get_mut(&key) {
+                    rewrite_model_refs(child, rename);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for v in items {
+                rewrite_model_refs(v, rename);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Builds the payload that shares an image's bytes by ticket — the mirror of
+/// `apply.rs`'s `attachment_changes`: `{"t": {ticket: {$ref: attachment}}}`,
+/// where the attachment model holds `{"$blob": {"$blob": base64, "$mime": mime}}`.
+/// Confirmed against `apply/tests.rs`'s own fixture for that decoder, not
+/// inferred — there is no existing outgoing use of this shape to copy from.
+///
+/// This only shares the bytes; nothing in the note references the ticket yet.
+/// Pair it with `add_unit` for a `$image` unit whose `imageTicket` names it.
+pub fn add_attachment(
+    ticket: &str,
+    mime: &str,
+    bytes: &[u8],
+    booth_id: &str,
+    edit_status_id: Option<&str>,
+) -> AppResult<Vec<u8>> {
+    use base64::Engine as _;
+
+    let mut tree = GenericTree::new("share", "attachsharedirection");
+    if let Value::Object(props) = &mut tree.models.get_mut("share").unwrap().props {
+        props.insert(
+            "t".into(),
+            json!({ ticket: { "$ref": "a" } }),
+        );
+    }
+    tree.insert(detached(GenericModel {
+        id: "a".into(),
+        parent_id: Some("share".into()),
+        model_type: "attachment".into(),
+        props: json!({
+            "$blob": {
+                "$blob": base64::engine::general_purpose::STANDARD.encode(bytes),
+                "$mime": mime,
+            }
+        }),
+        children: Vec::new(),
+    }));
+
+    direction::encode(
+        DirectionData::Model(tree),
+        booth_id,
+        edit_status_id,
+        Default::default(),
+    )
+}
+
 fn detached(mut model: GenericModel) -> GenericModel {
     if let Value::Object(props) = &mut model.props {
         crate::atdoc::mark_detached(props);
@@ -353,6 +687,147 @@ pub struct Pending {
     pub stroke_id: String,
     pub layer_id: String,
     pub stroke: Value,
+}
+
+/// What the room has been told about a non-ink unit, keyed by the note's own
+/// unit id — the `room_units` counterpart of `Ledger`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnitLedger {
+    pub unit_id: String,
+    pub element_id: String,
+    pub layer_id: String,
+}
+
+/// One non-ink unit waiting to go out. Rasterising a unit the room has no
+/// native format for is the caller's job — the editor is where a Canvas
+/// exists to do it — so by the time this reaches `send`, it is already either
+/// the unit's own model or a finished image.
+#[derive(Debug, Clone)]
+pub enum PendingUnit {
+    /// A type the room understands on its own (`$text` today).
+    Native {
+        unit_id: String,
+        layer_id: String,
+        models: Vec<GenericModel>,
+    },
+    /// A plain rectangle or ellipse, sent as a real `DrShapeElement` rather
+    /// than a placed unit — see `add_shape`.
+    Shape {
+        unit_id: String,
+        layer_id: String,
+        shape_type: i64,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        stroke_color: String,
+        stroke_width: f64,
+    },
+    /// Everything else: a rasterised stand-in, shared as an image.
+    Image {
+        unit_id: String,
+        layer_id: String,
+        ticket: String,
+        mime: String,
+        bytes: Vec<u8>,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    },
+}
+
+impl PendingUnit {
+    pub fn unit_id(&self) -> &str {
+        match self {
+            PendingUnit::Native { unit_id, .. } => unit_id,
+            PendingUnit::Shape { unit_id, .. } => unit_id,
+            PendingUnit::Image { unit_id, .. } => unit_id,
+        }
+    }
+
+    pub fn layer_id(&self) -> &str {
+        match self {
+            PendingUnit::Native { layer_id, .. } => layer_id,
+            PendingUnit::Shape { layer_id, .. } => layer_id,
+            PendingUnit::Image { layer_id, .. } => layer_id,
+        }
+    }
+}
+
+/// What sending a `PendingUnit` produced: the payload(s) to post, and the
+/// element id to remember it by (the unit's own model in the native case, the
+/// synthesised `$image` unit in the rasterised case — either way, the id a
+/// later removal would need).
+pub fn build_unit_post(
+    unit: &PendingUnit,
+    ids: &mut IdGenerator,
+    author: &Author,
+) -> AppResult<(Vec<Vec<u8>>, String)> {
+    match unit {
+        PendingUnit::Native {
+            layer_id, models, ..
+        } => {
+            let (payload, element_id) = add_unit(models, layer_id, ids, author, None)?;
+            Ok((vec![payload], element_id))
+        }
+        PendingUnit::Shape {
+            layer_id,
+            shape_type,
+            x,
+            y,
+            width,
+            height,
+            stroke_color,
+            stroke_width,
+            ..
+        } => {
+            let shape = Shape {
+                shape_type: *shape_type,
+                x: *x,
+                y: *y,
+                width: *width,
+                height: *height,
+                stroke_color,
+                stroke_width: *stroke_width,
+            };
+            let (payload, element_id) = add_shape(&shape, layer_id, ids, author, None)?;
+            Ok((vec![payload], element_id))
+        }
+        PendingUnit::Image {
+            unit_id,
+            layer_id,
+            ticket,
+            mime,
+            bytes,
+            x,
+            y,
+            width,
+            height,
+        } => {
+            let share = add_attachment(ticket, mime, bytes, &format!("{layer_id}_[unit]_draw"), None)?;
+            let image_model = GenericModel {
+                id: "img".into(),
+                parent_id: None,
+                model_type: "$image".into(),
+                props: json!({
+                    // Without this, `place_unit` (apply.rs) reads an empty
+                    // unit id and renames every synthesised image to the same
+                    // final model id — the second shape sent silently replaces
+                    // the first instead of sitting beside it.
+                    "unitId": unit_id,
+                    "x": x, "y": y, "width": width, "height": height,
+                    "imageTicket": ticket,
+                    "opacity": 1.0,
+                    "hasShadow": false,
+                }),
+                children: Vec::new(),
+            };
+            let (unit_payload, element_id) =
+                add_unit(&[image_model], layer_id, ids, author, None)?;
+            Ok((vec![share, unit_payload], element_id))
+        }
+    }
 }
 
 /// Every stroke on a personal layer, with the layer it is on.
@@ -682,6 +1157,242 @@ mod tests {
         let mut bad = stroke();
         bad["points"]["$points"] = json!([]);
         assert!(add_stroke(&bad, "L", &mut IdGenerator::new(1), &author(), None).is_err());
+    }
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+    use crate::atdoc::parse_document;
+
+    fn author() -> Author {
+        Author {
+            user_id: "213163099101".into(),
+            name: "田中 博悠".into(),
+            company_id: "12386000".into(),
+            room_id: "5777426101072728".into(),
+            room_user_id: "1786500056276".into(),
+        }
+    }
+
+    fn text_unit(id: &str) -> Vec<GenericModel> {
+        vec![GenericModel {
+            id: "root".into(),
+            parent_id: None,
+            model_type: "$text".into(),
+            props: json!({
+                "unitId": id,
+                "x": 10.0, "y": 20.0, "width": 200.0, "height": 60.0,
+                "text": "hello",
+            }),
+            children: Vec::new(),
+        }]
+    }
+
+    #[test]
+    fn what_it_builds_is_what_the_reader_reads_back() {
+        // Same proof as `add_stroke`'s: decode our own direction with the code
+        // that decodes the room's, so the two halves cannot silently disagree.
+        let (bytes, element_id) = add_unit(
+            &text_unit("u-1"),
+            "P1_[layer-forUser]_9",
+            &mut IdGenerator::new(7),
+            &author(),
+            None,
+        )
+        .unwrap();
+        assert!(element_id.contains(' '), "{element_id}");
+        let direction = super::super::apply::decode(&bytes).unwrap();
+        match direction.changes.as_slice() {
+            [super::super::apply::Change::Unit { unit_id, models }] => {
+                assert_eq!(unit_id, "u-1");
+                assert_eq!(models[0].model_type, "$text");
+                assert_eq!(models[0].props["text"], json!("hello"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_element_is_a_unit_wrapper_not_a_stroke() {
+        let (bytes, _) = add_unit(
+            &text_unit("u-2"),
+            "P1_[layer-forUser]_9",
+            &mut IdGenerator::new(1),
+            &author(),
+            None,
+        )
+        .unwrap();
+        let doc = parse_document(&bytes).unwrap();
+        let e = doc
+            .models
+            .values()
+            .find(|m| m.model_type == "E")
+            .unwrap();
+        assert_eq!(e.props["T"], json!(ELEMENT_TYPE_UNIT));
+        assert_eq!(e.props["B"], json!(BASE_TYPE_RECT));
+        assert_eq!(e.props["X"].as_f64(), Some(10.0));
+        assert_eq!(e.props["W"].as_f64(), Some(200.0));
+    }
+
+    #[test]
+    fn two_units_sent_with_the_same_generator_do_not_collide() {
+        let mut ids = IdGenerator::new(1);
+        let (_, id_a) = add_unit(&text_unit("u-a"), "L", &mut ids, &author(), None).unwrap();
+        let (_, id_b) = add_unit(&text_unit("u-b"), "L", &mut ids, &author(), None).unwrap();
+        assert_ne!(id_a, id_b);
+    }
+
+    #[test]
+    fn sending_with_no_models_is_refused_rather_than_sent_empty() {
+        assert!(add_unit(&[], "L", &mut IdGenerator::new(1), &author(), None).is_err());
+    }
+
+    #[test]
+    fn an_attachment_is_what_the_reader_reads_back_as_an_asset() {
+        let bytes = add_attachment("tkt-1", "image/png", &[1, 2, 3], "P1", None).unwrap();
+        let direction = super::super::apply::decode(&bytes).unwrap();
+        match direction.changes.as_slice() {
+            [super::super::apply::Change::Asset { ticket, mime, bytes }] => {
+                assert_eq!(ticket, "tkt-1");
+                assert_eq!(mime, "image/png");
+                assert_eq!(bytes, &vec![1, 2, 3]);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_rasterised_unit_posts_its_bytes_and_a_placed_image_unit() {
+        let pending = PendingUnit::Image {
+            unit_id: "shape-1".into(),
+            layer_id: "P1_[layer-forUser]_9".into(),
+            ticket: "tkt-shape-1".into(),
+            mime: "image/png".into(),
+            bytes: vec![9, 9, 9],
+            x: 5.0,
+            y: 6.0,
+            width: 70.0,
+            height: 80.0,
+        };
+        let (payloads, element_id) =
+            build_unit_post(&pending, &mut IdGenerator::new(3), &author()).unwrap();
+        assert!(element_id.contains(' '), "{element_id}");
+        assert_eq!(payloads.len(), 2, "the asset, then the unit that places it");
+
+        match super::super::apply::decode(&payloads[0]).unwrap().changes.as_slice() {
+            [super::super::apply::Change::Asset { ticket, bytes, .. }] => {
+                assert_eq!(ticket, "tkt-shape-1");
+                assert_eq!(bytes, &vec![9, 9, 9]);
+            }
+            other => panic!("{other:?}"),
+        }
+        match super::super::apply::decode(&payloads[1]).unwrap().changes.as_slice() {
+            [super::super::apply::Change::Unit { unit_id, models }] => {
+                // The regression: without this, `place_unit` reads an empty
+                // unit id and renames every synthesised image to the same
+                // final model id, so a second shape silently replaces a first.
+                assert_eq!(unit_id, "shape-1");
+                assert_eq!(models[0].model_type, "$image");
+                assert_eq!(models[0].props["unitId"], json!("shape-1"));
+                assert_eq!(models[0].props["imageTicket"], json!("tkt-shape-1"));
+                assert_eq!(models[0].props["width"].as_f64(), Some(70.0));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn two_rasterised_shapes_keep_distinct_unit_ids() {
+        // The concrete failure the fix above targets: two shapes sent as
+        // images used to both carry an empty unit id, so the receiver's
+        // `place_unit` renamed them to the *same* final model id and the
+        // second shape silently replaced the first instead of sitting
+        // beside it.
+        let shape_a = PendingUnit::Image {
+            unit_id: "shape-a".into(),
+            layer_id: "L".into(),
+            ticket: "tkt-a".into(),
+            mime: "image/png".into(),
+            bytes: vec![1],
+            x: 0.0, y: 0.0, width: 10.0, height: 10.0,
+        };
+        let shape_b = PendingUnit::Image {
+            unit_id: "shape-b".into(),
+            layer_id: "L".into(),
+            ticket: "tkt-b".into(),
+            mime: "image/png".into(),
+            bytes: vec![2],
+            x: 20.0, y: 20.0, width: 10.0, height: 10.0,
+        };
+        let mut ids = IdGenerator::new(1);
+        let (payloads_a, _) = build_unit_post(&shape_a, &mut ids, &author()).unwrap();
+        let (payloads_b, _) = build_unit_post(&shape_b, &mut ids, &author()).unwrap();
+
+        let unit_id_of = |payload: &[u8]| match super::super::apply::decode(payload)
+            .unwrap()
+            .changes
+            .into_iter()
+            .next()
+        {
+            Some(super::super::apply::Change::Unit { unit_id, .. }) => unit_id,
+            other => panic!("{other:?}"),
+        };
+        let id_a = unit_id_of(&payloads_a[1]);
+        let id_b = unit_id_of(&payloads_b[1]);
+        assert_ne!(id_a, id_b);
+        assert_eq!(id_a, "shape-a");
+        assert_eq!(id_b, "shape-b");
+    }
+
+    #[test]
+    fn shape_kind_maps_to_the_decompiled_ordinals() {
+        assert_eq!(shape_type_for_kind("rect"), Some(SHAPE_TYPE_RECTANGLE));
+        assert_eq!(shape_type_for_kind("ellipse"), Some(SHAPE_TYPE_DISK));
+        // Corner styles, arrows, balloons — nothing this build has confirmed
+        // geometry for. The caller rasterises these instead of guessing.
+        assert_eq!(shape_type_for_kind("roundRect"), None);
+        assert_eq!(shape_type_for_kind("diamond"), None);
+    }
+
+    #[test]
+    fn a_shape_is_a_real_element_not_a_placed_unit() {
+        // Unlike `add_unit`, a shape has no "u" wrapper at all — it is an
+        // element the way a stroke is, sharing the same "S" pen style.
+        //
+        // `apply::decode` cannot be used as the oracle here the way it is for
+        // strokes and units: this build has never needed to *receive* a room
+        // shape, so its decoder has no case for `T=SHAPE` and would report it
+        // as unsupported. What is being verified is only that the *outgoing*
+        // bytes carry the fields `DrShapeElement`'s own decompiled property
+        // keys require, parsed back with the raw document reader.
+        let shape = Shape {
+            shape_type: SHAPE_TYPE_RECTANGLE,
+            x: 5.0, y: 6.0, width: 70.0, height: 80.0,
+            stroke_color: "#1f2937",
+            stroke_width: 3.0,
+        };
+        let (bytes, element_id) = add_shape(
+            &shape, "P1_[layer-forUser]_9", &mut IdGenerator::new(1), &author(), None,
+        )
+        .unwrap();
+        assert!(element_id.contains(' '), "{element_id}");
+
+        let doc = parse_document(&bytes).unwrap();
+        let e = doc.models.values().find(|m| m.model_type == "E").unwrap();
+        assert_eq!(e.props["T"], json!(ELEMENT_TYPE_SHAPE));
+        assert_eq!(e.props["B"], json!(BASE_TYPE_RECT));
+        assert_eq!(e.props["t"], json!(SHAPE_TYPE_RECTANGLE));
+        assert_eq!(e.props["X"].as_f64(), Some(5.0));
+        assert_eq!(e.props["W"].as_f64(), Some(70.0));
+        assert!(e.props.get("P").is_none(), "a shape has no point array");
+        assert!(e.props.get("u").is_none(), "a shape is not a placed unit");
+
+        let style_index = e.props["p"]["$ref"].as_u64().unwrap() as usize;
+        let style = &doc.models[&style_index];
+        assert_eq!(style.model_type, "S");
+        assert_eq!(style.props["C"], json!("1F2937"));
+        assert_eq!(style.props["W"].as_f64(), Some(3.0));
     }
 }
 

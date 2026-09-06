@@ -125,13 +125,19 @@ export function strokeOutlineShapes(stroke: Stroke): StrokeShape[] {
     const py = dx;
     const ra = widthAt(stroke.pen, a.p) / 2;
     const rb = widthAt(stroke.pen, b.p) / 2;
+    // Wound to match `ctx.arc`'s default (clockwise on screen), not the
+    // reverse of it — a quad wound opposite to the circles it bridges still
+    // covers the same area, but nonzero-rule fill reads the overlap as a
+    // *cancellation* between the two opposite windings, not a union. That
+    // punched a hole in the ink at every sample point instead of just
+    // covering it twice.
     shapes.push({
       kind: "quad",
       pts: [
-        { x: a.x + px * ra, y: a.y + py * ra },
-        { x: b.x + px * rb, y: b.y + py * rb },
-        { x: b.x - px * rb, y: b.y - py * rb },
         { x: a.x - px * ra, y: a.y - py * ra },
+        { x: b.x - px * rb, y: b.y - py * rb },
+        { x: b.x + px * rb, y: b.y + py * rb },
+        { x: a.x + px * ra, y: a.y + py * ra },
       ],
     });
   }

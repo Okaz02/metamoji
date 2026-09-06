@@ -5,28 +5,80 @@ import type { StrokeShape } from "./stroke";
 import { screenToWorld, worldToScreen, zoomAbout, clampScale, fitRect } from "../render/viewport";
 import type { InkPoint, PenAttributes, Stroke } from "./types";
 
-/** Point-in-union test mirroring what a nonzero-rule Canvas fill computes. */
+/**
+ * Nonzero-winding point-in-fill test, matching what `ctx.fill()` actually
+ * computes for the subpaths `buildStrokePath` emits — NOT a naive "is this
+ * point inside any shape" union. A union can't see two overlapping subpaths
+ * wound in *opposite* directions quietly cancelling the fill between them
+ * (winding +1 and -1 sum to zero — a hole — even though both shapes "contain"
+ * the point). That is exactly the bug this once let through: the quads were
+ * wound opposite to `ctx.arc`'s circles, so every sample point punched a hole
+ * in the ink instead of adding to it. Only counting signed winding, the way
+ * Canvas does, can catch that class of bug again.
+ */
 function isCovered(shapes: StrokeShape[], x: number, y: number): boolean {
-  return shapes.some((shape) => {
-    if (shape.kind === "circle") return Math.hypot(x - shape.cx, y - shape.cy) <= shape.r;
-    const [a, b, c, d] = shape.pts;
-    return pointInQuad(x, y, a, b, c, d);
-  });
+  let winding = 0;
+  for (const shape of shapes) {
+    const poly = shape.kind === "circle" ? circlePolygon(shape) : shape.pts;
+    winding += windingContribution(poly, x, y);
+  }
+  return winding !== 0;
 }
 
-function pointInQuad(
-  x: number, y: number,
-  a: { x: number; y: number }, b: { x: number; y: number },
-  c: { x: number; y: number }, d: { x: number; y: number },
-): boolean {
-  const cross = (p: typeof a, q: typeof a) => (q.x - p.x) * (y - p.y) - (q.y - p.y) * (x - p.x);
-  const s1 = Math.sign(cross(a, b));
-  const s2 = Math.sign(cross(b, c));
-  const s3 = Math.sign(cross(c, d));
-  const s4 = Math.sign(cross(d, a));
-  const allNonNeg = s1 >= 0 && s2 >= 0 && s3 >= 0 && s4 >= 0;
-  const allNonPos = s1 <= 0 && s2 <= 0 && s3 <= 0 && s4 <= 0;
-  return allNonNeg || allNonPos;
+/** Approximates `ctx.arc(cx, cy, r, 0, Math.PI * 2)` — increasing angle, the
+ * same direction `buildStrokePath` actually draws circles in. */
+function circlePolygon(circle: Extract<StrokeShape, { kind: "circle" }>): { x: number; y: number }[] {
+  const segments = 64;
+  const poly: { x: number; y: number }[] = [];
+  for (let i = 0; i < segments; i++) {
+    const t = (i / segments) * Math.PI * 2;
+    poly.push({ x: circle.cx + circle.r * Math.cos(t), y: circle.cy + circle.r * Math.sin(t) });
+  }
+  return poly;
+}
+
+/** Signed edge-crossing count of a ray from `(x, y)` against one closed,
+ * directed polygon — the standard nonzero winding-number algorithm. */
+function windingContribution(poly: { x: number; y: number }[], x: number, y: number): number {
+  let winding = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const cross = (b.x - a.x) * (y - a.y) - (x - a.x) * (b.y - a.y);
+    if (a.y <= y) {
+      if (b.y > y && cross > 0) winding += 1;
+    } else if (b.y <= y && cross < 0) {
+      winding -= 1;
+    }
+  }
+  return winding;
+}
+
+/**
+ * Scans the stroke's bounding box for a row that is covered, then not, then
+ * covered again — an interior hole, as opposed to just the stroke's own
+ * outer edge. Point-sampling a specific spot can land exactly on a shape's
+ * boundary (see `isCovered`'s own caveats); scanning whole rows does not
+ * depend on guessing where the trouble spot is.
+ */
+function hasInteriorGap(shapes: StrokeShape[], points: InkPoint[]): boolean {
+  const step = 0.5;
+  const minX = Math.min(...points.map((p) => p.x)) - 8;
+  const maxX = Math.max(...points.map((p) => p.x)) + 8;
+  const minY = Math.min(...points.map((p) => p.y)) - 8;
+  const maxY = Math.max(...points.map((p) => p.y)) + 8;
+
+  for (let y = minY; y <= maxY; y += step) {
+    let spans = 0;
+    let wasCovered = false;
+    for (let x = minX; x <= maxX; x += step) {
+      const covered = isCovered(shapes, x, y);
+      if (covered && !wasCovered) spans++;
+      wasCovered = covered;
+    }
+    if (spans > 1) return true;
+  }
+  return false;
 }
 
 const pen: PenAttributes = {
@@ -134,6 +186,37 @@ describe("stroke geometry", () => {
     }
     const shapes = strokeOutlineShapes(stroke(points));
     expect(isCovered(shapes, 30, 30)).toBe(false);
+  });
+
+  it("fills solid along a plain stroke, at any angle — no per-sample holes", () => {
+    // Regression for a real bug: the bridging quad was wound opposite to
+    // `ctx.arc`'s circles, so nonzero-rule fill read every sample point as a
+    // *cancellation* rather than a union — every one of them punched a
+    // circular hole in an otherwise ordinary line. A plain, non-self-crossing
+    // stroke should never have an interior hole, and that has to hold
+    // regardless of which way the stroke happens to point (the bug was
+    // direction-dependent: it only showed up for some quad orientations) —
+    // and it only showed up for realistically-spaced samples: too dense a
+    // test stroke, and neighbouring circles alone paper over a cancelled
+    // quad, which is exactly why an earlier version of this test passed even
+    // against the broken code. A sample spacing close to the pen's own
+    // radius is what actually exercises the quad away from the centreline.
+    const pen: PenAttributes = {
+      color: "#000000",
+      width: 10,
+      penType: "ballpoint",
+      opacity: 1,
+      pressureSensitivity: 0,
+    };
+    for (let deg = 0; deg < 360; deg += 30) {
+      const rad = (deg * Math.PI) / 180;
+      const points: InkPoint[] = [];
+      for (let i = 0; i <= 10; i++) {
+        points.push({ x: 50 + i * 4 * Math.cos(rad), y: 50 + i * 4 * Math.sin(rad), p: 0.5, t: i });
+      }
+      const shapes = strokeOutlineShapes({ ...stroke(points), pen });
+      expect(hasInteriorGap(shapes, points)).toBe(false);
+    }
   });
 });
 

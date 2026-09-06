@@ -49,6 +49,7 @@ import { currentLayer, searchableText } from "../model/types";
 import { IDENTITY_VIEWPORT, type Viewport } from "../render/viewport";
 import { EXPORT_DPI, renderPagesForExport, renderPageToDataUrl } from "../io/pageRender";
 import { editFor, forgetEdit } from "../classroom/live";
+import { unitsToSend } from "../classroom/sendUnits";
 import { parsePageRange, readPdfInfo, renderPdfPages } from "../io/pdf";
 import { useAssetCache } from "../hooks/useAssetCache";
 import { useEditorStore } from "../store/editorStore";
@@ -112,6 +113,11 @@ export function EditorScreen() {
     setEditingUnitId(unitId);
   }, []);
   const assets = useAssetCache(noteId ?? null, doc);
+  // `save` reads the note out of the store rather than closing over it, so the
+  // pictures it needs to rasterise for the classroom have to reach it the same
+  // way rather than through its dependency list.
+  const assetsRef = useRef(assets);
+  assetsRef.current = assets;
 
   // -- load ---------------------------------------------------------------
 
@@ -173,8 +179,18 @@ export function EditorScreen() {
       // through the room rather than through the file. Failing to send is not
       // a failed save — the writing is safe locally either way — so it is
       // reported on its own line.
+      //
+      // Ink and everything else go out in the same call deliberately: the
+      // room only understands `$text` as its own model, so anything else here
+      // has already been rasterised (see `unitsToSend`) — but sending it as a
+      // *separate* call opened a second connection right after the first
+      // one's closed, and the relay allows only one per device. That race
+      // (not just the extra round trip) is what made sends unreliable.
       try {
-        const sent = await api.classboxSendStrokes(state.noteId);
+        const sent = await api.classboxSendStrokes(
+          state.noteId,
+          unitsToSend(state.doc, assetsRef.current),
+        );
         setClassSync(sent > 0 ? { kind: "sent", strokes: sent } : null);
       } catch (err) {
         // One repair attempt before bothering the user: most failures here are
@@ -206,6 +222,14 @@ export function EditorScreen() {
     let stopped = false;
     const off: Array<() => void> = [];
     let retry: ReturnType<typeof setTimeout> | null = null;
+    // Only ever one pending reconnect. A refused login arrives twice — once
+    // as the thrown error here, once as the room ending — and the relay
+    // allows a single connection per device, so two of these racing is worse
+    // than the disconnection they are answering.
+    const reconnectIn = (ms: number) => {
+      if (retry) clearTimeout(retry);
+      retry = setTimeout(() => void connect(), ms);
+    };
 
     void api
       .classboxOrigin(noteId)
@@ -232,7 +256,7 @@ export function EditorScreen() {
         setWatching(false);
         // A room that is not there now may be in a moment; a note left open
         // over a dropped connection should not stay silent for ever.
-        retry = setTimeout(() => void connect(), 15_000);
+        reconnectIn(15_000);
       }
     };
 
@@ -255,7 +279,7 @@ export function EditorScreen() {
           setWatching(false);
           // Reconnecting also resyncs, which is what repairs whatever the
           // connection dropped in the middle of.
-          retry = setTimeout(() => void connect(), 3_000);
+          reconnectIn(3_000);
         }),
       );
       if (stopped) {

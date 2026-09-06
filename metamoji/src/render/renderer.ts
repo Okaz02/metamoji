@@ -268,6 +268,38 @@ export function drawFurniture(
 // Units
 // ---------------------------------------------------------------------------
 
+/**
+ * Renders one unit alone onto a fresh canvas sized to its own frame, and
+ * returns it as a PNG data URL.
+ *
+ * For the classroom sync path: a unit type the room has no native wire format
+ * for ($shape, $form, $surveyunit, $flipunit — see `EditorScreen`'s send
+ * step) still has to reach the room somehow, and a picture of it is the only
+ * representation everyone understands. Only a Canvas can turn the unit's
+ * vector content into pixels, so this has to live on this side of the IPC
+ * boundary; Rust only ever sees the finished bytes.
+ */
+export function rasterizeUnit(unit: Unit, assets?: AssetResolver): string {
+  const canvas = document.createElement("canvas");
+  const scale = 2; // A little supersampling so text and thin strokes hold up.
+  canvas.width = Math.max(1, Math.ceil(unit.width * scale));
+  canvas.height = Math.max(1, Math.ceil(unit.height * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("rasterizeUnit: no 2D context");
+
+  ctx.scale(scale, scale);
+  ctx.translate(-unit.x, -unit.y);
+  const visible: Rect = { x: unit.x, y: unit.y, width: unit.width, height: unit.height };
+  drawUnit(ctx, unit, visible, {
+    viewport: { scale: 1, tx: 0, ty: 0 },
+    viewWidth: canvas.width,
+    viewHeight: canvas.height,
+    assets: assets ?? { getImage: () => undefined },
+  });
+
+  return canvas.toDataURL("image/png");
+}
+
 function drawUnit(
   ctx: CanvasRenderingContext2D,
   unit: Unit,
