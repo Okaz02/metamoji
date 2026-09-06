@@ -11,7 +11,7 @@ import { CanvasController, type ToolMode } from "./controller";
 import { EditSession } from "../editor/session";
 import { A4_WIDTH, A4_HEIGHT, createDocument, createDrawUnit, createTextUnit } from "../model/factory";
 import { strokeBounds } from "../model/stroke";
-import type { InkPoint, PenAttributes, Point, Rect } from "../model/types";
+import type { InkPoint, PenAttributes, Point, Rect, Unit } from "../model/types";
 
 /**
  * jsdom has no canvas backend, so the drawing calls need somewhere to go. The
@@ -302,15 +302,16 @@ describe("CanvasController viewport", () => {
     expect(toolRequests).toContain("select");
   });
 
-  it("doesn't drag the page's ink off-screen when a lasso bundles it with another unit", () => {
-    // The bug: a lasso in "overlap" mode selects the whole shared $draw unit
-    // the instant any one stroke touches the loop, even if the loop's real
-    // target was some other unit sitting on top of the ink. Dragging that
-    // other unit then keeps the bundled selection and drags the $draw unit's
-    // nominal x/y along with it — which doesn't move any ink (it renders at
-    // its own stroke coordinates regardless) but does desync those nominal
-    // coordinates from what the renderer's culling test expects, hiding every
-    // stroke on the page once they drift off-screen.
+  it("moves a stroke's own points (and keeps its outline in sync) when its $draw unit is dragged", () => {
+    // Each stroke now has its own $draw unit, so it can be individually
+    // selected and moved (see stroke.ts and commitStroke). A lasso in
+    // "overlap" mode can still bundle that unit's id together with another
+    // unit sitting on top of it, and dragging the bundle must move both
+    // consistently: the stroke's actual points translate by the same delta as
+    // the other unit, and the $draw unit's x/y/width/height (only used for
+    // its selection outline) stay in sync with the stroke's new bounds —
+    // rather than the old bug where the frame drifted away from ink that
+    // never actually moved, hiding it once the frame scrolled off-screen.
     const { controller, scene, overlay } = setup(984, 642);
     const doc = createDocument();
 
@@ -370,11 +371,139 @@ describe("CanvasController viewport", () => {
 
     const units = session.document.pages[0].layers[0].units;
     const movedShape = units.find((u) => u.id === shape.id)!;
-    const stillDraw = units.find((u) => u.id === draw.id)!;
+    const movedDraw = units.find((u) => u.id === draw.id)! as typeof draw;
+    const movedStroke = movedDraw.strokes[0];
 
-    expect(movedShape.x).not.toBe(0);
-    expect(stillDraw.x).toBe(0);
-    expect(stillDraw.y).toBe(0);
+    expect(movedShape.x).toBeCloseTo(200);
+    expect(movedShape.y).toBeCloseTo(200);
+    // The stroke's own points moved by the same delta as the shape...
+    expect(movedStroke.points[0].x).toBeCloseTo(700);
+    expect(movedStroke.points[0].y).toBeCloseTo(700);
+    // ...and the unit's outline was refreshed to match, not left stale.
+    expect(movedDraw.x).toBeCloseTo(movedStroke.bounds.x);
+    expect(movedDraw.y).toBeCloseTo(movedStroke.bounds.y);
+  });
+
+  it("selects and drags a single stroke by itself, leaving an untouched one in place", () => {
+    // The feature this covers: previously every stroke on a layer shared one
+    // $draw unit, so there was nothing to individually select. Now each
+    // stroke has its own unit, so clicking one with the select tool and
+    // dragging it should move only that stroke.
+    const { controller, scene, overlay } = setup(984, 642);
+    const doc = createDocument();
+
+    const pen: PenAttributes = {
+      color: "#000000",
+      width: 4,
+      penType: "ballpoint",
+      opacity: 1,
+      pressureSensitivity: 0,
+    };
+    const makeDraw = (x: number, y: number) => {
+      const points: InkPoint[] = [{ x, y, p: 0.5, t: 0 }];
+      const unit = createDrawUnit();
+      unit.strokes = [{ id: `s-${x}-${y}`, points, pen, bounds: strokeBounds(points, pen.width) }];
+      return unit;
+    };
+    const strokeA = makeDraw(100, 100);
+    const strokeB = makeDraw(400, 400);
+    doc.pages[0].layers[0].units.push(strokeA, strokeB);
+
+    const session = new EditSession(doc);
+    controller.attach(scene, overlay);
+    controller.setDocument(doc, 0, session);
+    controller.setTool("select");
+
+    const vp = controller.getViewport();
+    const toScreen = (wx: number, wy: number) => ({
+      x: wx * vp.scale + vp.tx,
+      y: wy * vp.scale + vp.ty,
+    });
+    const send = (type: string, x: number, y: number) =>
+      overlay.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 12,
+          button: 0,
+          buttons: type === "pointerup" ? 0 : 1,
+          clientX: x,
+          clientY: y,
+          bubbles: true,
+        }),
+      );
+
+    const start = toScreen(100, 100);
+    const end = toScreen(150, 130);
+    send("pointerdown", start.x, start.y);
+    send("pointermove", end.x, end.y);
+    send("pointerup", end.x, end.y);
+
+    const units = session.document.pages[0].layers[0].units;
+    const movedA = units.find((u) => u.id === strokeA.id)! as typeof strokeA;
+    const untouchedB = units.find((u) => u.id === strokeB.id)! as typeof strokeB;
+
+    expect(movedA.strokes[0].points[0].x).toBeCloseTo(150);
+    expect(movedA.strokes[0].points[0].y).toBeCloseTo(130);
+    expect(untouchedB.strokes[0].points[0].x).toBe(400);
+    expect(untouchedB.strokes[0].points[0].y).toBe(400);
+  });
+
+  it("gives each drawn stroke its own unit, and erasing one removes only that unit", () => {
+    const { controller, scene, overlay } = setup(984, 642);
+    const doc = createDocument();
+    const session = new EditSession(doc);
+    controller.attach(scene, overlay);
+    controller.setDocument(doc, 0, session);
+    // The real app's store re-feeds the controller on every session change
+    // (see editorStore.ts's openDocument); without this, the controller keeps
+    // acting on the document as it was at setDocument time.
+    session.subscribe((event) => controller.setDocument(event.doc, 0, session));
+
+    const vp = controller.getViewport();
+    const toScreen = (wx: number, wy: number) => ({
+      x: wx * vp.scale + vp.tx,
+      y: wy * vp.scale + vp.ty,
+    });
+    const send = (type: string, x: number, y: number, pointerId: number) =>
+      overlay.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId,
+          button: 0,
+          buttons: type === "pointerup" ? 0 : 1,
+          clientX: x,
+          clientY: y,
+          bubbles: true,
+        }),
+      );
+    const draw = (from: Point, to: Point, pointerId: number) => {
+      const a = toScreen(from.x, from.y);
+      const b = toScreen(to.x, to.y);
+      send("pointerdown", a.x, a.y, pointerId);
+      send("pointermove", b.x, b.y, pointerId);
+      send("pointerup", b.x, b.y, pointerId);
+    };
+
+    controller.setTool("pen");
+    draw({ x: 100, y: 100 }, { x: 130, y: 100 }, 20);
+    draw({ x: 400, y: 400 }, { x: 430, y: 400 }, 21);
+
+    const drawUnits = () =>
+      session.document.pages[0].layers[0].units.filter(
+        (u): u is Extract<Unit, { type: "$draw" }> => u.type === "$draw",
+      );
+    const [firstUnit, secondUnit] = drawUnits();
+    expect(drawUnits()).toHaveLength(2);
+
+    // Erase the first stroke, at wherever the pen-smoothing actually recorded
+    // it — only its unit should disappear.
+    controller.setTool("eraser");
+    const firstPoint = firstUnit.strokes[0].points[0];
+    const eraseAt = toScreen(firstPoint.x, firstPoint.y);
+    send("pointerdown", eraseAt.x, eraseAt.y, 22);
+    send("pointerup", eraseAt.x, eraseAt.y, 22);
+
+    const remaining = drawUnits();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe(secondUnit.id);
   });
 
   it("zooms about a point without moving the world point under it", () => {
